@@ -1,0 +1,22 @@
+# Entornos virtuales y artefactos de Python
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Logs sincronizados desde el servidor (datos, regenerables con sync_logs.sh)
+precision-8443.log
+precision-8443.log.*
+*.log
+*.log.*.gz
+
+# Salidas generadas por activity.py
+activity.html
+performance.html
+
+# Configuración local de Claude
+.claude/settings.local.json
+
+# Archivos del sistema operativo
+.DS_Store
+Thumbs.db
