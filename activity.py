@@ -4,12 +4,18 @@
 import configparser
 import glob
 import gzip
+import hashlib
 import html as html_mod
 import json
 import os
+import pickle
 import re
 from collections import defaultdict
 from datetime import datetime
+
+# Bump when parsing/categorization/aggregation logic changes, to invalidate the
+# cached aggregates of the immutable .gz logs.
+CACHE_VERSION = 1
 
 LOG_PATTERN = re.compile(
     r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}[.]\d+)'  # timestamp
@@ -59,11 +65,76 @@ def _parse_file(path):
 
 def parse_logs(log_dir, pattern):
     """Parse all log files matching pattern inside log_dir, sorted by timestamp."""
+    return _parse_sorted(glob.glob(os.path.join(log_dir, pattern)))
+
+
+def _parse_sorted(files):
     events = []
-    for path in sorted(glob.glob(os.path.join(log_dir, pattern)), reverse=True):
+    for path in sorted(files):
         events.extend(_parse_file(path))
     events.sort(key=lambda e: e['ts'])
     return events
+
+
+# ── Incremental aggregation cache ──────────────────────────────────────────────
+# Rotated .gz logs are immutable: aggregate them once, cache the result, and only
+# reprocess the live (uncompressed) log each run. Cuts the per-run cost ~5x.
+
+def _gz_signature(gz_files):
+    parts = []
+    for f in sorted(gz_files):
+        st = os.stat(f)
+        parts.append(f'{os.path.basename(f)}:{st.st_size}:{st.st_mtime_ns}')
+    return hashlib.sha256((f'v{CACHE_VERSION}|' + '|'.join(parts)).encode()).hexdigest()
+
+
+def _gz_partials(gz_files, cache_path, log):
+    """(raw_activity, scan_perf) for the immutable .gz logs, via a pickle cache."""
+    sig = _gz_signature(gz_files) if gz_files else f'v{CACHE_VERSION}|empty'
+    if cache_path and os.path.exists(cache_path):
+        try:
+            with open(cache_path, 'rb') as fh:
+                cached = pickle.load(fh)
+            if cached.get('sig') == sig:
+                log('  caché .gz: HIT (historia reutilizada)')
+                return cached['activity'], cached['scan']
+        except Exception:
+            pass
+    log('  caché .gz: MISS (reprocesando históricos)')
+    events = _parse_sorted(gz_files)
+    activity_raw = _accumulate_activity(events)
+    ops, logins, http = _scan_events(events)
+    scan = (ops, logins, dict(http))
+    if cache_path:
+        try:
+            tmp = cache_path + '.tmp'
+            with open(tmp, 'wb') as fh:
+                pickle.dump({'sig': sig, 'activity': activity_raw, 'scan': scan},
+                            fh, protocol=pickle.HIGHEST_PROTOCOL)
+            os.replace(tmp, cache_path)
+        except Exception:
+            pass
+    return activity_raw, scan
+
+
+def build_report_data(log_dir, pattern, cache_path=None, log=lambda _m: None):
+    """Parse logs into (data, perf_data), reusing cached aggregates for the
+    immutable .gz history and only reprocessing the live log each run."""
+    files = glob.glob(os.path.join(log_dir, pattern))
+    gz_files   = [f for f in files if f.endswith('.gz')]
+    live_files = [f for f in files if not f.endswith('.gz')]
+
+    act_gz, scan_gz = _gz_partials(gz_files, cache_path, log)
+
+    live_events = _parse_sorted(live_files)
+    act_live = _accumulate_activity(live_events)
+    ops_l, logins_l, http_l = _scan_events(live_events)
+
+    data = _finalize_activity(_merge_activity(act_gz, act_live))
+    perf_data = _perf_from_scan(scan_gz[0] + ops_l,
+                                scan_gz[1] + logins_l,
+                                _merge_counts(scan_gz[2], http_l))
+    return data, perf_data
 
 
 # ── Debug info extraction (used for ERROR-level detail panels) ─────────────────
@@ -267,7 +338,12 @@ def _extract_farm_from_json(msg, farms):
         pass
 
 
-def extract_activity(events):
+def _accumulate_activity(events):
+    """Raw, mergeable activity aggregates for a list of events (unsorted output).
+
+    Split out from extract_activity so the immutable .gz history can be
+    aggregated once and merged with the live log each run (see _merge_activity).
+    """
     reports = []
     downloads = []
     categorized_errors = []
@@ -304,11 +380,48 @@ def extract_activity(events):
         'reports': reports,
         'downloads': downloads,
         'errors': categorized_errors,
-        'hourly': dict(sorted(hourly.items())),
+        'hourly': dict(hourly),
         'report_types': dict(report_types),
-        'farms': dict(sorted(farms.items(), key=lambda x: -x[1])),
+        'farms': dict(farms),
         'total_events': len(events),
     }
+
+
+def _merge_counts(a, b):
+    out = dict(a)
+    for k, v in b.items():
+        out[k] = out.get(k, 0) + v
+    return out
+
+
+def _merge_activity(a, b):
+    """Merge two raw activity aggregates (a precedes b in time)."""
+    return {
+        'reports':      a['reports'] + b['reports'],
+        'downloads':    a['downloads'] + b['downloads'],
+        'errors':       a['errors'] + b['errors'],
+        'hourly':       _merge_counts(a['hourly'], b['hourly']),
+        'report_types': _merge_counts(a['report_types'], b['report_types']),
+        'farms':        _merge_counts(a['farms'], b['farms']),
+        'total_events': a['total_events'] + b['total_events'],
+    }
+
+
+def _finalize_activity(raw):
+    """Sort the merged raw aggregates into the final extract_activity shape."""
+    return {
+        'reports':      raw['reports'],
+        'downloads':    raw['downloads'],
+        'errors':       raw['errors'],
+        'hourly':       dict(sorted(raw['hourly'].items())),
+        'report_types': dict(raw['report_types']),
+        'farms':        dict(sorted(raw['farms'].items(), key=lambda x: -x[1])),
+        'total_events': raw['total_events'],
+    }
+
+
+def extract_activity(events):
+    return _finalize_activity(_accumulate_activity(events))
 
 
 def extract_daily(data):
@@ -438,8 +551,8 @@ def _aggregate(ops, logins, http_by_hour):
     }
 
 
-def extract_performance(events):
-    ops, logins, http_by_hour = _scan_events(events)
+def _perf_from_scan(ops, logins, http_by_hour):
+    """Build the final performance dict from (possibly merged) scan data."""
     agg = _aggregate(ops, logins, http_by_hour)
     return {
         'ops':       ops,
@@ -448,6 +561,10 @@ def extract_performance(events):
         'total_ops': len(ops),
         **agg,
     }
+
+
+def extract_performance(events):
+    return _perf_from_scan(*_scan_events(events))
 
 
 def extract_daily_perf(perf_data):
@@ -1867,10 +1984,10 @@ if __name__ == '__main__':
     log(f'Log dir : {log_dir}')
     log(f'Pattern : {pattern}')
 
-    events = parse_logs(log_dir, pattern)
-    log(f'  {len(events)} log entries loaded')
+    cache_path = os.path.join(output_dir, '.report_cache.pkl')
+    data, perf_data = build_report_data(log_dir, pattern, cache_path, log)
+    log(f'  {data["total_events"]} log entries loaded')
 
-    data = extract_activity(events)
     n_err  = sum(1 for e in data['errors'] if e['level'] == 'ERROR')
     n_warn = sum(1 for e in data['errors'] if e['level'] == 'WARN')
     log(f'  {len(data["reports"])} reports, {len(data["downloads"])} downloads')
@@ -1890,7 +2007,6 @@ if __name__ == '__main__':
     log(f'Report written to : {out} (+ .gz)')
 
     perf_name = cfg.get('output', 'perf_name', fallback='performance.html')
-    perf_data = extract_performance(events)
     daily_perf = extract_daily_perf(perf_data)
     log(f'  {perf_data["total_ops"]} timed ops, {len(perf_data["logins"])} logins')
     pout = os.path.join(output_dir, perf_name)
