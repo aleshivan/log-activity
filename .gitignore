@@ -14,6 +14,7 @@ precision-8443.log.*
 # Salidas generadas por activity.py
 activity.html
 performance.html
+*.html.gz
 
 # Configuración local de Claude
 .claude/settings.local.json

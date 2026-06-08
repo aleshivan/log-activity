@@ -1823,6 +1823,23 @@ def html_report(data, daily, max_reports=60, top_farms_n=60):
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 
+def _write_report(path, content):
+    """Write the HTML and a precompressed .gz sibling (atomically, each).
+
+    nginx `gzip_static on` serves the .gz directly (Content-Encoding: gzip),
+    so the ~12 MB report transfers as ~0.2 MB without per-request CPU.
+    """
+    tmp = path + '.tmp'
+    with open(tmp, 'w') as f:
+        f.write(content)
+    os.replace(tmp, path)
+
+    gz_tmp = path + '.gz.tmp'
+    with gzip.open(gz_tmp, 'wt', encoding='utf-8') as f:
+        f.write(content)
+    os.replace(gz_tmp, path + '.gz')
+
+
 def _load_config():
     cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'activity.config')
     if not os.path.exists(cfg_path):
@@ -1869,19 +1886,13 @@ if __name__ == '__main__':
     log(f'  serie diaria: {len(daily["hours"])} horas UTC (días se agrupan por tz en el cliente)')
 
     out = os.path.join(output_dir, output_name)
-    tmp = out + '.tmp'
-    with open(tmp, 'w') as f:
-        f.write(html_report(data, daily, max_reports=max_reports, top_farms_n=top_farms_n))
-    os.replace(tmp, out)
-    log(f'Report written to : {out}')
+    _write_report(out, html_report(data, daily, max_reports=max_reports, top_farms_n=top_farms_n))
+    log(f'Report written to : {out} (+ .gz)')
 
     perf_name = cfg.get('output', 'perf_name', fallback='performance.html')
     perf_data = extract_performance(events)
     daily_perf = extract_daily_perf(perf_data)
     log(f'  {perf_data["total_ops"]} timed ops, {len(perf_data["logins"])} logins')
     pout = os.path.join(output_dir, perf_name)
-    tmp  = pout + '.tmp'
-    with open(tmp, 'w') as f:
-        f.write(perf_report(perf_data, daily_perf))
-    os.replace(tmp, pout)
-    log(f'Perf report   to : {pout}')
+    _write_report(pout, perf_report(perf_data, daily_perf))
+    log(f'Perf report   to : {pout} (+ .gz)')
