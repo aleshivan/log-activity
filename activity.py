@@ -201,6 +201,14 @@ def categorize_error(event):
         return {**_cat_db_tx_aborted(full, event['logger']), 'full': full}
     if 'intento de cambiar la clave fallo' in full or 'no existe ningun usuario' in full:
         return {**_cat_user_not_found(full), 'full': full}
+    if event['logger'].endswith('FallbackController') or 'Missing or invalid Authorization header' in full:
+        return {
+            'category': 'UNAUTH_PROBE', 'label': 'Sondeo no autorizado',
+            'color': 'warn',
+            'summary': 'Petición sin autorización al servidor (tráfico de sondeo/escaneo)',
+            'detail': event['logger'],
+            'full': full,
+        }
 
     # generic fallback
     return {
@@ -303,6 +311,50 @@ def extract_activity(events):
     }
 
 
+def extract_daily(data):
+    """Hourly-resolution UTC series for the daily view.
+
+    Emits parallel arrays keyed by absolute UTC hour so the *client* can bucket
+    them into local day + local hour-of-day according to the selected timezone
+    (the rest of the report converts UTC→local, so the daily view must too).
+
+    Errors are split into 'errors_app' (genuine app errors) and 'errors_probe'
+    (UNAUTH_PROBE noise) so day-to-day comparison is not dominated by scan traffic.
+    """
+    vol   = defaultdict(int)
+    rep   = defaultdict(int)
+    dl    = defaultdict(int)
+    eapp  = defaultdict(int)
+    eprobe = defaultdict(int)
+    warn  = defaultdict(int)
+
+    for key, cnt in data['hourly'].items():     # keys: 'YYYY-MM-DD HH:00'
+        vol[key[:13]] += cnt
+    for r in data['reports']:
+        rep[r['ts'].strftime('%Y-%m-%d %H')] += 1
+    for d in data['downloads']:
+        dl[d['ts'].strftime('%Y-%m-%d %H')] += 1
+    for e in data['errors']:
+        k = e['ts'].strftime('%Y-%m-%d %H')
+        if e['level'] == 'WARN':
+            warn[k] += 1
+        elif e['category'] == 'UNAUTH_PROBE':
+            eprobe[k] += 1
+        else:
+            eapp[k] += 1
+
+    hours = sorted(set(vol) | set(rep) | set(dl) | set(eapp) | set(eprobe) | set(warn))
+    return {
+        'hours':        [f'{h[:10]}T{h[11:13]}:00:00Z' for h in hours],
+        'vol':          [vol[h]    for h in hours],
+        'reports':      [rep[h]    for h in hours],
+        'downloads':    [dl[h]     for h in hours],
+        'errors_app':   [eapp[h]   for h in hours],
+        'errors_probe': [eprobe[h] for h in hours],
+        'warns':        [warn[h]   for h in hours],
+    }
+
+
 # ── Performance extraction ─────────────────────────────────────────────────────
 
 _PERF_OPS = [
@@ -398,6 +450,26 @@ def extract_performance(events):
     }
 
 
+def extract_daily_perf(perf_data):
+    """UTC-resolution performance data for the daily comparison.
+
+    Embeds the raw latency samples tagged with their absolute UTC hour (ops are
+    few, ~hundreds) plus hourly login counts, so the client can bucket them into
+    local day + hour-of-day per the selected timezone and compute correct
+    percentiles over any window — consistent with the rest of the report.
+    """
+    ops = [[op['ts'].strftime('%Y-%m-%dT%H:00:00Z'), op['ms']] for op in perf_data['ops']]
+    login = defaultdict(int)
+    for lg in perf_data['logins']:
+        login[lg['ts'].strftime('%Y-%m-%d %H')] += 1
+    hours = sorted(login)
+    return {
+        'ops':         ops,
+        'login_hours': [f'{h[:10]}T{h[11:13]}:00:00Z' for h in hours],
+        'logins':      [login[h] for h in hours],
+    }
+
+
 def _ms_class(ms):
     if ms > 500:
         return 'ms-slow'
@@ -458,7 +530,9 @@ def _login_rows(logins):
 
 # ── Performance HTML report ────────────────────────────────────────────────────
 
-def perf_report(perf_data):
+def perf_report(perf_data, daily_perf):
+    dperf_json = json.dumps(daily_perf)  # UTC series; days bucketed client-side per tz
+
     hs     = perf_data['hourly_stats']
     hours  = list(hs.keys())
     h_iso  = json.dumps([f'{h[:10]}T{h[11:]}:00Z' for h in hours])
@@ -544,6 +618,24 @@ def perf_report(perf_data):
   .ms-med{{color:#d97706;font-weight:600}}
   .scrollable{{max-height:420px;overflow-y:auto}}
   canvas{{max-height:300px}}
+  /* ── Vista diaria ── */
+  .day-bar{{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:16px}}
+  .day-nav{{background:#1a2744;color:#fff;border:none;border-radius:6px;width:32px;height:32px;font-size:1.1rem;cursor:pointer;line-height:1}}
+  .day-nav:hover{{background:#2c3e63}} .day-nav:disabled{{opacity:.3;cursor:default}}
+  .day-sel{{border:1px solid #cbd5e1;border-radius:6px;padding:5px 10px;font-size:.9rem;cursor:pointer;background:#fff}}
+  .day-cmp-lbl{{font-size:.82rem;color:#666;margin-left:8px}}
+  .day-badge{{display:inline-block;background:#fef3c7;color:#92400e;border-radius:12px;padding:2px 10px;font-size:.72rem;font-weight:600}}
+  .day-note{{font-size:.78rem;color:#888;margin:10px 0 0}}
+  .day-cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-bottom:18px}}
+  .day-card{{background:#f8fafc;border:1px solid #e8ecf0;border-radius:8px;padding:14px;text-align:center}}
+  .day-card .num{{font-size:1.6rem;font-weight:700;color:#1a2744}}
+  .day-card .num.red{{color:#dc2626}} .day-card .num.amber{{color:#d97706}} .day-card .num.green{{color:#16a34a}}
+  .day-card .lbl{{font-size:.7rem;color:#666;margin-top:3px;text-transform:uppercase;letter-spacing:.04em}}
+  .day-card .delta{{font-size:.76rem;margin-top:5px;font-weight:600;min-height:1em}}
+  .delta.up{{color:#dc2626}} .delta.down{{color:#16a34a}} .delta.flat{{color:#9ca3af}}
+  .day-charts{{display:grid;grid-template-columns:2fr 1fr;gap:20px}}
+  @media(max-width:900px){{.day-charts{{grid-template-columns:1fr}}}}
+  .day-chart-wrap{{position:relative;height:300px}}
 </style>
 </head>
 <body>
@@ -571,9 +663,41 @@ def perf_report(perf_data):
     <div class="card"><div class="num green">{len(perf_data["logins"])}</div><div class="lbl">Logins</div></div>
   </div>
 
+  <div class="section">
+    <h2>Vista diaria — comparar rendimiento entre días</h2>
+    <div class="day-bar">
+      <button class="day-nav" id="dpPrev" title="Día anterior">‹</button>
+      <select class="day-sel" id="dpSel"></select>
+      <button class="day-nav" id="dpNext" title="Día siguiente">›</button>
+      <span class="day-badge" id="dpPartial" style="display:none">parcial</span>
+      <span class="day-cmp-lbl">Comparar con:</span>
+      <select class="day-sel" id="dpCmp"></select>
+      <span class="day-cmp-lbl">Métrica latencia:</span>
+      <select class="day-sel" id="dpMetric">
+        <option value="avg">Promedio</option>
+        <option value="p90">P90</option>
+        <option value="p95" selected>P95</option>
+        <option value="max">Máximo</option>
+      </select>
+    </div>
+    <div class="day-cards">
+      <div class="day-card"><div class="num" id="dp_count">—</div><div class="lbl">Operaciones</div><div class="delta" id="dpd_count"></div></div>
+      <div class="day-card"><div class="num amber" id="dp_avg">—</div><div class="lbl">Avg (ms)</div><div class="delta" id="dpd_avg"></div></div>
+      <div class="day-card"><div class="num amber" id="dp_p90">—</div><div class="lbl">P90 (ms)</div><div class="delta" id="dpd_p90"></div></div>
+      <div class="day-card"><div class="num red" id="dp_p95">—</div><div class="lbl">P95 (ms)</div><div class="delta" id="dpd_p95"></div></div>
+      <div class="day-card"><div class="num red" id="dp_max">—</div><div class="lbl">Máx (ms)</div><div class="delta" id="dpd_max"></div></div>
+      <div class="day-card"><div class="num green" id="dp_logins">—</div><div class="lbl">Logins</div><div class="delta" id="dpd_logins"></div></div>
+    </div>
+    <div class="day-charts">
+      <div class="day-chart-wrap"><canvas id="dpLatChart"></canvas></div>
+      <div class="day-chart-wrap"><canvas id="dpVolChart"></canvas></div>
+    </div>
+    <div class="day-note" id="dpNote"></div>
+  </div>
+
   <div class="charts-grid">
     <div class="chart-card wide">
-      <h2>Tiempos de Respuesta por Hora — Promedio · P90 · P95</h2>
+      <h2>Tiempos de Respuesta por Hora — Promedio · P90 · P95 (todo el rango)</h2>
       <canvas id="rtChart"></canvas>
     </div>
   </div>
@@ -788,6 +912,185 @@ if (saved) {{
   if (opt) {{ opt.selected = true; applyTz(saved); }}
 }}
 sel.addEventListener('change', () => applyTz(sel.value));
+
+// ── Vista diaria: comparación de rendimiento por día ──
+(function () {{
+  const DPERF = {dperf_json};              // UTC series: ops [[isoHour,ms]], login_hours[], logins[]
+  const DP_KEY = 'scarab_perf_day';
+  const STORAGE_KEY = 'scarab_tz';
+  const pad = n => String(n).padStart(2, '0');
+  const labels = Array.from({{length: 24}}, (_, h) => pad(h) + 'h');
+
+  function stats(arr) {{
+    if (!arr.length) return {{ count: 0, avg: 0, p50: 0, p90: 0, p95: 0, max: 0 }};
+    const s = [...arr].sort((a, b) => a - b), n = s.length;
+    const p = q => s[Math.min(Math.floor(n * q), n - 1)];
+    return {{ count: n, avg: Math.round(s.reduce((a, b) => a + b, 0) / n),
+      p50: p(.5), p90: p(.9), p95: p(.95), max: s[n - 1] }};
+  }}
+  // flatten latency samples of a day over an inclusive hour window
+  const latWin = (rec, lo, hi) => {{
+    let out = [];
+    for (let h = lo; h <= hi; h++) out = out.concat(rec.lat[h]);
+    return out;
+  }};
+  const sumWin = (arr, lo, hi) => {{ let t = 0; for (let h = lo; h <= hi; h++) t += arr[h] || 0; return t; }};
+
+  // Bucket an absolute UTC hour into [localDate, localHour] for the chosen tz.
+  function localBucket(iso, tz) {{
+    const p = new Intl.DateTimeFormat('en-CA', {{
+      timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', hourCycle: 'h23'
+    }}).formatToParts(new Date(iso));
+    const v = {{}};
+    p.forEach(x => v[x.type] = x.value);
+    return [`${{v.year}}-${{v.month}}-${{v.day}}`, parseInt(v.hour, 10) % 24];
+  }}
+
+  function buildDailyPerf(tz) {{
+    const days = {{}};
+    const ensure = d => {{
+      if (!days[d]) days[d] = {{ lat: Array.from({{length: 24}}, () => []), logins: Array(24).fill(0) }};
+      return days[d];
+    }};
+    DPERF.ops.forEach(([iso, ms]) => {{ const [d, h] = localBucket(iso, tz); ensure(d).lat[h].push(ms); }});
+    DPERF.login_hours.forEach((iso, i) => {{ const [d, h] = localBucket(iso, tz); ensure(d).logins[h] += DPERF.logins[i]; }});
+    Object.values(days).forEach(rec => {{
+      const active = [];
+      for (let h = 0; h < 24; h++) if (rec.lat[h].length || rec.logins[h]) active.push(h);
+      rec.first_hour = active.length ? active[0] : 0;
+      rec.last_hour  = active.length ? active[active.length - 1] : 23;
+      rec.partial    = rec.first_hour > 0 || rec.last_hour < 23;
+    }});
+    return days;
+  }}
+
+  let DP = {{}}, DP_DAYS = [], latChart = null, volChart2 = null;
+
+  const dpSel = document.getElementById('dpSel');
+  const dpCmp = document.getElementById('dpCmp');
+  const dpMetric = document.getElementById('dpMetric');
+  const prevBtn = document.getElementById('dpPrev');
+  const nextBtn = document.getElementById('dpNext');
+  const badge = document.getElementById('dpPartial');
+  const note = document.getElementById('dpNote');
+
+  // For latency, an increase is worse: up=red, down=green (matches CSS).
+  function setDelta(id, cur, base) {{
+    const el = document.getElementById('dpd_' + id);
+    if (base == null) {{ el.textContent = ''; el.className = 'delta'; return; }}
+    if (base === 0) {{ el.textContent = cur > 0 ? '▲ nuevo' : '–'; el.className = 'delta ' + (cur > 0 ? 'up' : 'flat'); return; }}
+    const pct = Math.round((cur - base) / base * 100);
+    const dir = pct > 0 ? 'up' : (pct < 0 ? 'down' : 'flat');
+    const sign = pct > 0 ? '▲ +' : (pct < 0 ? '▼ ' : '= ');
+    el.textContent = `${{sign}}${{pct}}%`;
+    el.className = 'delta ' + dir;
+  }}
+
+  function fillSelectors() {{
+    const cur = dpSel.value, curCmp = dpCmp.value;
+    dpSel.innerHTML = '';
+    dpCmp.innerHTML = '<option value="">(ninguno)</option>';
+    DP_DAYS.forEach(d => {{
+      const star = DP[d].partial ? ' *' : '';
+      dpSel.insertAdjacentHTML('beforeend', `<option value="${{d}}">${{d}}${{star}}</option>`);
+      dpCmp.insertAdjacentHTML('beforeend', `<option value="${{d}}">${{d}}${{star}}</option>`);
+    }});
+    const savedDay = localStorage.getItem(DP_KEY);
+    dpSel.value = (cur && DP[cur]) ? cur
+      : (savedDay && DP[savedDay]) ? savedDay
+      : DP_DAYS[DP_DAYS.length - 1];
+    if (curCmp && DP[curCmp]) dpCmp.value = curCmp;
+  }}
+
+  function render() {{
+    const day = dpSel.value, cmp = dpCmp.value, metric = dpMetric.value;
+    const D = DP[day];
+    if (!D) return;
+    const C = cmp && DP[cmp] ? DP[cmp] : null;
+    badge.style.display = D.partial ? '' : 'none';
+
+    // common hour window
+    let lo = D.first_hour, hi = D.last_hour, win = null;
+    if (C) {{ lo = Math.max(D.first_hour, C.first_hour); hi = Math.min(D.last_hour, C.last_hour); win = lo <= hi ? [lo, hi] : null; }}
+
+    // cards: full-day values
+    const dStat = stats(latWin(D, 0, 23));
+    document.getElementById('dp_count').textContent  = dStat.count + (D.partial ? ' *' : '');
+    document.getElementById('dp_avg').textContent    = dStat.avg;
+    document.getElementById('dp_p90').textContent    = dStat.p90;
+    document.getElementById('dp_p95').textContent    = dStat.p95;
+    document.getElementById('dp_max').textContent    = dStat.max;
+    const dLogins = sumWin(D.logins, 0, 23);
+    document.getElementById('dp_logins').textContent = dLogins + (D.partial ? ' *' : '');
+
+    if (C && win) {{
+      const cs = stats(latWin(C, win[0], win[1]));
+      const ds = stats(latWin(D, win[0], win[1]));
+      setDelta('count', ds.count, cs.count);
+      setDelta('avg', ds.avg, cs.avg);
+      setDelta('p90', ds.p90, cs.p90);
+      setDelta('p95', ds.p95, cs.p95);
+      setDelta('max', ds.max, cs.max);
+      setDelta('logins', sumWin(D.logins, win[0], win[1]), sumWin(C.logins, win[0], win[1]));
+    }} else {{
+      ['count','avg','p90','p95','max','logins'].forEach(k => setDelta(k, 0, null));
+    }}
+
+    // chart data: per hour-of-day metric
+    const latSeries = rec => labels.map((_, h) => stats(rec.lat[h])[metric]);
+    const volSeries = rec => rec.lat.map(a => a.length);
+
+    const latDs = [{{ label: `${{day}} · ${{metric}}`, data: latSeries(D), borderColor: '#3b82f6', backgroundColor: 'transparent', tension: .3, pointRadius: 2 }}];
+    const volDs = [{{ label: day, data: volSeries(D), backgroundColor: 'rgba(147,197,253,.8)' }}];
+    if (C) {{
+      latDs.push({{ label: `${{cmp}} · ${{metric}}`, data: latSeries(C), borderColor: '#e65100', backgroundColor: 'transparent', borderDash: [5,3], tension: .3, pointRadius: 2 }});
+      volDs.push({{ label: cmp, data: volSeries(C), backgroundColor: 'rgba(230,81,0,.45)' }});
+    }}
+
+    if (latChart) {{ latChart.data.datasets = latDs; latChart.update(); }}
+    else latChart = new Chart(document.getElementById('dpLatChart'), {{
+      type: 'line', data: {{ labels, datasets: latDs }},
+      options: {{ responsive: true, maintainAspectRatio: false,
+        plugins: {{ legend: {{ position: 'top' }}, title: {{ display: true, text: 'Latencia por hora del día (ms)' }} }},
+        scales: {{ x: {{ title: {{ display: true, text: 'hora del día (local)' }} }}, y: {{ beginAtZero: true, title: {{ display: true, text: 'ms' }} }} }} }}
+    }});
+    if (volChart2) {{ volChart2.data.datasets = volDs; volChart2.update(); }}
+    else volChart2 = new Chart(document.getElementById('dpVolChart'), {{
+      type: 'bar', data: {{ labels, datasets: volDs }},
+      options: {{ responsive: true, maintainAspectRatio: false,
+        plugins: {{ legend: {{ position: 'top' }}, title: {{ display: true, text: 'Volumen de ops por hora del día' }} }},
+        scales: {{ x: {{ title: {{ display: true, text: 'hora del día (local)' }} }}, y: {{ beginAtZero: true, title: {{ display: true, text: 'ops' }} }} }} }}
+    }});
+
+    let txt = `Día ${{day}}` + (D.partial ? ' (parcial *)' : '') + ` · franja observada ${{pad(D.first_hour)}}–${{pad(D.last_hour)}}h (hora local).`;
+    if (C) txt += win ? ` Δ vs ${{cmp}} sobre franja común ${{pad(win[0])}}–${{pad(win[1])}}h (latencia: ▲ rojo = más lento).` : ` Sin franja común con ${{cmp}}.`;
+    note.textContent = txt;
+
+    const i = DP_DAYS.indexOf(day);
+    prevBtn.disabled = i <= 0; nextBtn.disabled = i >= DP_DAYS.length - 1;
+    localStorage.setItem(DP_KEY, day);
+  }}
+
+  function step(delta) {{ const i = DP_DAYS.indexOf(dpSel.value) + delta; if (i >= 0 && i < DP_DAYS.length) {{ dpSel.value = DP_DAYS[i]; render(); }} }}
+
+  function rebuild(tz) {{
+    DP = buildDailyPerf(tz);
+    DP_DAYS = Object.keys(DP).sort();
+    fillSelectors();
+    render();
+  }}
+
+  prevBtn.addEventListener('click', () => step(-1));
+  nextBtn.addEventListener('click', () => step(1));
+  dpSel.addEventListener('change', render);
+  dpCmp.addEventListener('change', render);
+  dpMetric.addEventListener('change', render);
+
+  rebuild(localStorage.getItem(STORAGE_KEY) || 'UTC');
+  const tzSel = document.getElementById('tzSelect');
+  if (tzSel) tzSel.addEventListener('change', () => rebuild(tzSel.value));
+}})();
 </script>
 </body>
 </html>'''
@@ -800,6 +1103,7 @@ CATEGORY_META = {
     'DB_DUPLICATE_KEY':('Clave duplicada en DB', '#991b1b', '#fee2e2', '#ef4444'),
     'DB_TX_ABORTED':   ('TX abortada (cascada)', '#7c3aed', '#ede9fe', '#8b5cf6'),
     'USER_NOT_FOUND':  ('Usuario no encontrado', '#1e40af', '#dbeafe', '#3b82f6'),
+    'UNAUTH_PROBE':    ('Sondeo no autorizado',  '#9a3412', '#ffedd5', '#fb923c'),
     'OTHER':           ('Otro',                  '#374151', '#f3f4f6', '#6b7280'),
 }
 
@@ -936,26 +1240,99 @@ def build_error_html(errors):
             f'</div>'
         )
 
+    # Lazy stacks: move the heavy <pre class="stack"> bodies (≈74% of the file)
+    # out of the initial DOM into a JSON island; inject them on demand (expand/copy).
+    stack_store = []
+
+    def _stash(m):
+        stack_store.append(m.group(2))
+        idattr = m.group(1) or ''
+        return f'<pre class="stack lazy"{idattr} data-sid="{len(stack_store) - 1}"></pre>'
+
+    cats_html = re.sub(r'<pre class="stack"( id="[^"]*")?>(.*?)</pre>',
+                       _stash, cats_html, flags=re.S)
+    stack_island = ('<script type="application/json" id="stackData">'
+                    + json.dumps(stack_store) + '</script>')
+
     copy_js = '''<script>
+const STACKS = JSON.parse(document.getElementById('stackData').textContent);
+function fillStack(pre) {
+  if (!pre || !pre.classList.contains('lazy')) return;
+  pre.innerHTML = STACKS[+pre.dataset.sid];
+  pre.classList.remove('lazy');
+  pre.removeAttribute('data-sid');
+}
+// Inject a stack only when its <details> is opened.
+document.querySelectorAll('details').forEach(d => {
+  d.addEventListener('toggle', () => {
+    if (d.open) d.querySelectorAll('pre.stack.lazy').forEach(fillStack);
+  });
+});
 document.querySelectorAll('.copy-btn').forEach(btn => {
   btn.addEventListener('click', e => {
     e.stopPropagation();
     const pre = document.getElementById(btn.dataset.target);
+    fillStack(pre);  // materialize before copying
     navigator.clipboard.writeText(pre.textContent).then(() => {
       btn.textContent = 'Copiado!';
       setTimeout(() => btn.textContent = 'Copiar', 1800);
     });
   });
 });
+
+// ── Paginación + filtro por categoría de errores ──
+(function () {
+  const PAGE_SIZE = 20;
+  document.querySelectorAll('.err-cat').forEach(cat => {
+    const body = cat.querySelector('.err-cat-body');
+    if (!body) return;
+    const items = Array.from(body.querySelectorAll(':scope > .err-item'));
+    if (items.length <= PAGE_SIZE) return;  // pocas: sin paginador
+
+    const texts = items.map(el => el.textContent.toLowerCase());
+    const bar = document.createElement('div');
+    bar.className = 'err-pager';
+    const filter = document.createElement('input');
+    filter.type = 'search';
+    filter.placeholder = 'Filtrar en esta categoría…';
+    filter.className = 'err-filter';
+    const prev = document.createElement('button'); prev.textContent = '‹ Anterior'; prev.className = 'pg-btn';
+    const next = document.createElement('button'); next.textContent = 'Siguiente ›'; next.className = 'pg-btn';
+    const info = document.createElement('span'); info.className = 'pg-info';
+    bar.append(filter, prev, info, next);
+    body.parentNode.insertBefore(bar, body);
+
+    let page = 0, filtered = items;
+    function apply() {
+      const q = filter.value.trim().toLowerCase();
+      filtered = q ? items.filter((_, i) => texts[i].includes(q)) : items;
+      const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+      if (page >= pages) page = pages - 1;
+      if (page < 0) page = 0;
+      items.forEach(el => { el.style.display = 'none'; });
+      const start = page * PAGE_SIZE;
+      filtered.slice(start, start + PAGE_SIZE).forEach(el => { el.style.display = ''; });
+      info.textContent = `Página ${page + 1} / ${pages} · ${filtered.length} ítem(s)`;
+      prev.disabled = page <= 0;
+      next.disabled = page >= pages - 1;
+    }
+    prev.addEventListener('click', () => { page--; apply(); });
+    next.addEventListener('click', () => { page++; apply(); });
+    filter.addEventListener('input', () => { page = 0; apply(); });
+    apply();
+  });
+})();
 </script>'''
 
-    return summary_html + cats_html + copy_js
+    return summary_html + cats_html + stack_island + copy_js
 
 
-def html_report(data, max_reports=60, top_farms_n=60):
+def html_report(data, daily, max_reports=60, top_farms_n=60):
     hourly = data['hourly']
     hours, counts = list(hourly.keys()), list(hourly.values())
     max_count = max(counts) if counts else 1
+
+    daily_json = json.dumps(daily)  # hourly UTC series; days are bucketed client-side per tz
 
     bar_rows = ''
     for h, c in zip(hours, counts):
@@ -1015,6 +1392,7 @@ def html_report(data, max_reports=60, top_farms_n=60):
 <meta charset="UTF-8">
 <meta http-equiv="refresh" content="300">
 <title>Scarab Precision — Actividad</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 <style>
   *{{box-sizing:border-box;margin:0;padding:0}}
   body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f4f6f9;color:#333}}
@@ -1088,11 +1466,36 @@ def html_report(data, max_reports=60, top_farms_n=60):
   .sql-pre{{font-family:monospace;font-size:.75rem;background:#f0fdf4;color:#14532d;border:1px solid #bbf7d0;padding:10px;border-radius:4px;white-space:pre-wrap;word-break:break-all}}
   .copy-btn{{font-size:.72rem;background:#e0e7ff;color:#3730a3;border:none;border-radius:4px;padding:2px 10px;cursor:pointer;font-weight:600}}
   .copy-btn:hover{{background:#c7d2fe}}
+  /* ── Paginador de errores ── */
+  .err-pager{{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 4px;border-bottom:1px solid #f0f0f0;margin-bottom:4px}}
+  .err-filter{{flex:1;min-width:160px;border:1px solid #cbd5e1;border-radius:6px;padding:5px 10px;font-size:.82rem;outline:none}}
+  .err-filter:focus{{border-color:#3b82f6}}
+  .pg-btn{{background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe;border-radius:6px;padding:4px 10px;font-size:.8rem;cursor:pointer;font-weight:600}}
+  .pg-btn:hover:not(:disabled){{background:#c7d2fe}}
+  .pg-btn:disabled{{opacity:.4;cursor:default}}
+  .pg-info{{font-size:.8rem;color:#666;white-space:nowrap}}
   .scrollable{{max-height:480px;overflow-y:auto}}
   /* ── Timezone selector ── */
   .tz-select{{background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.3);border-radius:6px;padding:4px 10px;font-size:.82rem;cursor:pointer;outline:none}}
   .tz-select:hover{{background:rgba(255,255,255,.25)}}
   .tz-select option{{background:#1a2744;color:#fff}}
+  /* ── Vista diaria ── */
+  .day-bar{{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:18px}}
+  .day-nav{{background:#1a2744;color:#fff;border:none;border-radius:6px;width:32px;height:32px;font-size:1.1rem;cursor:pointer;line-height:1}}
+  .day-nav:hover{{background:#2c3e63}}
+  .day-nav:disabled{{opacity:.3;cursor:default}}
+  .day-sel{{border:1px solid #cbd5e1;border-radius:6px;padding:5px 10px;font-size:.9rem;cursor:pointer;background:#fff}}
+  .day-cmp-lbl{{font-size:.82rem;color:#666;margin-left:8px}}
+  .day-badge{{display:inline-block;background:#fef3c7;color:#92400e;border-radius:12px;padding:2px 10px;font-size:.72rem;font-weight:600}}
+  .day-note{{font-size:.78rem;color:#888;margin:6px 0 16px}}
+  .day-cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-bottom:20px}}
+  .day-card{{background:#f8fafc;border:1px solid #e8ecf0;border-radius:8px;padding:14px;text-align:center}}
+  .day-card .num{{font-size:1.7rem;font-weight:700;color:#1a2744}}
+  .day-card .num.red{{color:#dc2626}} .day-card .num.amber{{color:#d97706}}
+  .day-card .lbl{{font-size:.72rem;color:#666;margin-top:3px;text-transform:uppercase;letter-spacing:.04em}}
+  .day-card .delta{{font-size:.78rem;margin-top:5px;font-weight:600;min-height:1em}}
+  .delta.up{{color:#dc2626}} .delta.down{{color:#16a34a}} .delta.flat{{color:#9ca3af}}
+  .day-chart-wrap{{position:relative;height:300px}}
 </style>
 </head>
 <body>
@@ -1129,13 +1532,37 @@ def html_report(data, max_reports=60, top_farms_n=60):
   </div>
 
   <div class="section">
-    <h2>Actividad por hora ({len(hourly)} horas)</h2>
-    <div class="scrollable">
-      <table>
-        <thead><tr><th>Hora</th><th>Volumen</th><th>#</th></tr></thead>
-        <tbody>{bar_rows}</tbody>
-      </table>
+    <h2>Vista diaria — comparar días</h2>
+    <div class="day-bar">
+      <button class="day-nav" id="dayPrev" title="Día anterior">‹</button>
+      <select class="day-sel" id="daySel"></select>
+      <button class="day-nav" id="dayNext" title="Día siguiente">›</button>
+      <span class="day-badge" id="dayPartial" style="display:none">parcial</span>
+      <span class="day-cmp-lbl">Comparar con:</span>
+      <select class="day-sel" id="cmpSel"></select>
     </div>
+    <div class="day-cards">
+      <div class="day-card"><div class="num" id="m_reports">—</div><div class="lbl">Reportes</div><div class="delta" id="d_reports"></div></div>
+      <div class="day-card"><div class="num" id="m_downloads">—</div><div class="lbl">Descargas</div><div class="delta" id="d_downloads"></div></div>
+      <div class="day-card"><div class="num red" id="m_errors_app">—</div><div class="lbl">Errores app</div><div class="delta" id="d_errors_app"></div></div>
+      <div class="day-card"><div class="num amber" id="m_errors_probe">—</div><div class="lbl">Sondeo</div><div class="delta" id="d_errors_probe"></div></div>
+      <div class="day-card"><div class="num amber" id="m_warns">—</div><div class="lbl">Warnings</div><div class="delta" id="d_warns"></div></div>
+    </div>
+    <div class="day-chart-wrap"><canvas id="dayChart"></canvas></div>
+    <div class="day-note" id="dayNote"></div>
+  </div>
+
+  <div class="section">
+    <h2>Actividad por hora — acumulada todo el rango</h2>
+    <details>
+      <summary style="font-size:.85rem;color:#2563eb;cursor:pointer;margin-bottom:12px">Mostrar tabla acumulada ({len(hourly)} horas)</summary>
+      <div class="scrollable">
+        <table>
+          <thead><tr><th>Hora</th><th>Volumen</th><th>#</th></tr></thead>
+          <tbody>{bar_rows}</tbody>
+        </table>
+      </div>
+    </details>
   </div>
 
   <div class="section">
@@ -1219,6 +1646,177 @@ def html_report(data, max_reports=60, top_farms_n=60):
   sel.addEventListener('change', () => applyTz(sel.value));
 }})();
 </script>
+<script>
+(function () {{
+  const SERIES = {daily_json};           // hourly UTC series
+  const STORAGE_KEY = 'scarab_tz';
+  const DAY_KEY = 'scarab_day';
+  const KEYS = ['vol', 'reports', 'downloads', 'errors_app', 'errors_probe', 'warns'];
+  const METRICS = ['reports', 'downloads', 'errors_app', 'errors_probe', 'warns'];
+
+  const daySel  = document.getElementById('daySel');
+  const cmpSel  = document.getElementById('cmpSel');
+  const prevBtn = document.getElementById('dayPrev');
+  const nextBtn = document.getElementById('dayNext');
+  const badge   = document.getElementById('dayPartial');
+  const note    = document.getElementById('dayNote');
+  const pad = n => String(n).padStart(2, '0');
+  const labels = Array.from({{length: 24}}, (_, h) => pad(h) + 'h');
+
+  let DAILY = {{}}, DAYS = [], chart = null;
+
+  // Bucket an absolute UTC hour into [localDate, localHour] for the chosen tz,
+  // so the daily view stays consistent with the rest of the report.
+  function localBucket(iso, tz) {{
+    const p = new Intl.DateTimeFormat('en-CA', {{
+      timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', hourCycle: 'h23'
+    }}).formatToParts(new Date(iso));
+    const v = {{}};
+    p.forEach(x => v[x.type] = x.value);
+    return [`${{v.year}}-${{v.month}}-${{v.day}}`, parseInt(v.hour, 10) % 24];
+  }}
+
+  function buildDaily(tz) {{
+    const days = {{}};
+    SERIES.hours.forEach((iso, i) => {{
+      const [d, h] = localBucket(iso, tz);
+      if (!days[d]) {{
+        days[d] = {{}};
+        KEYS.forEach(k => days[d][k] = Array(24).fill(0));
+      }}
+      KEYS.forEach(k => {{ days[d][k][h] += SERIES[k][i]; }});
+    }});
+    Object.values(days).forEach(rec => {{
+      const active = [];
+      for (let h = 0; h < 24; h++) if (rec.vol[h] > 0) active.push(h);
+      rec.first_hour = active.length ? active[0] : 0;
+      rec.last_hour  = active.length ? active[active.length - 1] : 23;
+      rec.partial    = rec.first_hour > 0 || rec.last_hour < 23;
+    }});
+    return days;
+  }}
+
+  function fillSelectors() {{
+    const cur = daySel.value, curCmp = cmpSel.value;
+    daySel.innerHTML = '';
+    cmpSel.innerHTML = '<option value="">(ninguno)</option>';
+    DAYS.forEach(d => {{
+      const star = DAILY[d].partial ? ' *' : '';
+      daySel.insertAdjacentHTML('beforeend', `<option value="${{d}}">${{d}}${{star}}</option>`);
+      cmpSel.insertAdjacentHTML('beforeend', `<option value="${{d}}">${{d}}${{star}}</option>`);
+    }});
+    const savedDay = localStorage.getItem(DAY_KEY);
+    daySel.value = (cur && DAILY[cur]) ? cur
+      : (savedDay && DAILY[savedDay]) ? savedDay
+      : DAYS[DAYS.length - 1];
+    if (curCmp && DAILY[curCmp]) cmpSel.value = curCmp;
+  }}
+
+  const sum = (arr, lo, hi) => {{ let t = 0; for (let h = lo; h <= hi; h++) t += arr[h] || 0; return t; }};
+
+  function setDelta(id, cur, base) {{
+    const el = document.getElementById('d_' + id);
+    if (base == null) {{ el.textContent = ''; el.className = 'delta'; return; }}
+    if (base === 0) {{
+      el.textContent = cur > 0 ? '▲ nuevo' : '–';
+      el.className = 'delta ' + (cur > 0 ? 'up' : 'flat');
+      return;
+    }}
+    const pct = Math.round((cur - base) / base * 100);
+    const dir = pct > 0 ? 'up' : (pct < 0 ? 'down' : 'flat');
+    const sign = pct > 0 ? '▲ +' : (pct < 0 ? '▼ ' : '= ');
+    el.textContent = `${{sign}}${{pct}}%`;
+    el.className = 'delta ' + dir;
+  }}
+
+  function render() {{
+    const day = daySel.value;
+    const cmp = cmpSel.value;
+    const D = DAILY[day];
+    if (!D) return;
+    const C = cmp && DAILY[cmp] ? DAILY[cmp] : null;
+
+    badge.style.display = D.partial ? '' : 'none';
+
+    let lo = D.first_hour, hi = D.last_hour, win = null;
+    if (C) {{
+      lo = Math.max(D.first_hour, C.first_hour);
+      hi = Math.min(D.last_hour, C.last_hour);
+      win = lo <= hi ? [lo, hi] : null;
+    }}
+
+    METRICS.forEach(key => {{
+      const total = sum(D[key], 0, 23);
+      document.getElementById('m_' + key).textContent =
+        total.toLocaleString('es') + (D.partial ? ' *' : '');
+      if (C && win) setDelta(key, sum(D[key], win[0], win[1]), sum(C[key], win[0], win[1]));
+      else setDelta(key, 0, null);
+    }});
+
+    let txt = `Totales del día ${{day}}` + (D.partial ? ' (parcial *)' : '') +
+              ` · franja observada ${{pad(D.first_hour)}}–${{pad(D.last_hour)}}h (hora local).`;
+    if (C) {{
+      txt += win
+        ? ` Δ comparado con ${{cmp}} sobre la franja común ${{pad(win[0])}}–${{pad(win[1])}}h.`
+        : ` Sin franja horaria común con ${{cmp}}: no se puede comparar de forma justa.`;
+    }}
+    note.textContent = txt;
+
+    drawChart(day, D, cmp, C);
+    const i = DAYS.indexOf(day);
+    prevBtn.disabled = i <= 0;
+    nextBtn.disabled = i >= DAYS.length - 1;
+    localStorage.setItem(DAY_KEY, day);
+  }}
+
+  function drawChart(day, D, cmp, C) {{
+    const ds = [{{
+      label: day, data: D.vol,
+      backgroundColor: 'rgba(74,127,203,.65)', borderColor: '#4a7fcb', borderWidth: 1,
+    }}];
+    if (C) ds.push({{
+      label: cmp, data: C.vol, type: 'line',
+      borderColor: '#e65100', backgroundColor: 'rgba(230,81,0,.1)',
+      borderWidth: 2, pointRadius: 2, tension: .3, fill: false,
+    }});
+    if (chart) {{ chart.data.datasets = ds; chart.update(); return; }}
+    chart = new Chart(document.getElementById('dayChart'), {{
+      type: 'bar',
+      data: {{ labels, datasets: ds }},
+      options: {{
+        responsive: true, maintainAspectRatio: false,
+        scales: {{
+          x: {{ title: {{ display: true, text: 'hora del día (local)' }} }},
+          y: {{ beginAtZero: true, title: {{ display: true, text: 'eventos' }} }},
+        }},
+        plugins: {{ legend: {{ position: 'top' }} }},
+      }},
+    }});
+  }}
+
+  function step(delta) {{
+    const i = DAYS.indexOf(daySel.value) + delta;
+    if (i >= 0 && i < DAYS.length) {{ daySel.value = DAYS[i]; render(); }}
+  }}
+
+  function rebuild(tz) {{
+    DAILY = buildDaily(tz);
+    DAYS  = Object.keys(DAILY).sort();
+    fillSelectors();
+    render();
+  }}
+
+  prevBtn.addEventListener('click', () => step(-1));
+  nextBtn.addEventListener('click', () => step(1));
+  daySel.addEventListener('change', render);
+  cmpSel.addEventListener('change', render);
+
+  rebuild(localStorage.getItem(STORAGE_KEY) || 'UTC');
+  const tzSel = document.getElementById('tzSelect');
+  if (tzSel) tzSel.addEventListener('change', () => rebuild(tzSel.value));
+}})();
+</script>
 </body>
 </html>'''
 
@@ -1267,19 +1865,23 @@ if __name__ == '__main__':
     for cat, cnt in sorted(cats.items(), key=lambda x: -x[1]):
         log(f'    {cat}: {cnt}')
 
+    daily = extract_daily(data)
+    log(f'  serie diaria: {len(daily["hours"])} horas UTC (días se agrupan por tz en el cliente)')
+
     out = os.path.join(output_dir, output_name)
     tmp = out + '.tmp'
     with open(tmp, 'w') as f:
-        f.write(html_report(data, max_reports=max_reports, top_farms_n=top_farms_n))
+        f.write(html_report(data, daily, max_reports=max_reports, top_farms_n=top_farms_n))
     os.replace(tmp, out)
     log(f'Report written to : {out}')
 
     perf_name = cfg.get('output', 'perf_name', fallback='performance.html')
     perf_data = extract_performance(events)
+    daily_perf = extract_daily_perf(perf_data)
     log(f'  {perf_data["total_ops"]} timed ops, {len(perf_data["logins"])} logins')
     pout = os.path.join(output_dir, perf_name)
     tmp  = pout + '.tmp'
     with open(tmp, 'w') as f:
-        f.write(perf_report(perf_data))
+        f.write(perf_report(perf_data, daily_perf))
     os.replace(tmp, pout)
     log(f'Perf report   to : {pout}')
