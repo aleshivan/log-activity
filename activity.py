@@ -647,7 +647,7 @@ def _login_rows(logins):
 
 # ── Performance HTML report ────────────────────────────────────────────────────
 
-def perf_report(perf_data, daily_perf):
+def perf_report(perf_data, daily_perf, refresh_seconds=1200):
     dperf_json = json.dumps(daily_perf)  # UTC series; days bucketed client-side per tz
 
     hs     = perf_data['hourly_stats']
@@ -699,7 +699,7 @@ def perf_report(perf_data, daily_perf):
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="refresh" content="300">
+<meta http-equiv="refresh" content="{refresh_seconds}">
 <title>Scarab Precision — Rendimiento</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 <style>
@@ -1444,7 +1444,7 @@ document.querySelectorAll('.copy-btn').forEach(btn => {
     return summary_html + cats_html + stack_island + copy_js
 
 
-def html_report(data, daily, max_reports=60, top_farms_n=60):
+def html_report(data, daily, max_reports=60, top_farms_n=60, refresh_seconds=1200):
     hourly = data['hourly']
     hours, counts = list(hourly.keys()), list(hourly.values())
     max_count = max(counts) if counts else 1
@@ -1507,7 +1507,7 @@ def html_report(data, daily, max_reports=60, top_farms_n=60):
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="refresh" content="300">
+<meta http-equiv="refresh" content="{refresh_seconds}">
 <title>Scarab Precision — Actividad</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 <style>
@@ -1975,6 +1975,7 @@ if __name__ == '__main__':
     output_name = cfg.get('output',  'name',        fallback='activity.html')
     max_reports = cfg.getint('display', 'max_reports', fallback=60)
     top_farms_n = cfg.getint('display', 'top_farms',   fallback=60)
+    refresh_s   = cfg.getint('display', 'refresh_seconds', fallback=1200)
     quiet       = cfg.getboolean('display', 'quiet',   fallback=False)
 
     def log(msg):
@@ -2003,12 +2004,13 @@ if __name__ == '__main__':
     log(f'  serie diaria: {len(daily["hours"])} horas UTC (días se agrupan por tz en el cliente)')
 
     out = os.path.join(output_dir, output_name)
-    _write_report(out, html_report(data, daily, max_reports=max_reports, top_farms_n=top_farms_n))
+    _write_report(out, html_report(data, daily, max_reports=max_reports,
+                                    top_farms_n=top_farms_n, refresh_seconds=refresh_s))
     log(f'Report written to : {out} (+ .gz)')
 
     perf_name = cfg.get('output', 'perf_name', fallback='performance.html')
     daily_perf = extract_daily_perf(perf_data)
     log(f'  {perf_data["total_ops"]} timed ops, {len(perf_data["logins"])} logins')
     pout = os.path.join(output_dir, perf_name)
-    _write_report(pout, perf_report(perf_data, daily_perf))
+    _write_report(pout, perf_report(perf_data, daily_perf, refresh_seconds=refresh_s))
     log(f'Perf report   to : {pout} (+ .gz)')
