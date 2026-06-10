@@ -401,6 +401,8 @@ def render_index(systems, *, title='Reportes', subtitle='', refresh_seconds=1200
     return (
         '<!DOCTYPE html>\n<html lang="' + lang + '">\n<head>\n<meta charset="UTF-8">\n'
         f'<meta http-equiv="refresh" content="{refresh_seconds}">\n'
+        '<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">\n'
+        '<meta http-equiv="Pragma" content="no-cache"><meta http-equiv="Expires" content="0">\n'
         f'<title>{esc(title)}</title>\n<style>' + INDEX_CSS + '</style>\n</head>\n<body>\n'
         f'<header><h1>{esc(title)}</h1>'
         + (f'<small>{esc(subtitle)}</small>' if subtitle else '')
@@ -418,7 +420,7 @@ def _charts_sections(charts):
     return out
 
 
-def render_page(*, title, subtitle='', refresh_seconds=1200, lang='es',
+def render_page(*, title, subtitle='', refresh_seconds=1200, lang='es', home_url='index.html',
                 cards=None, daily=None, charts=None, tables=None, errors=None):
     """Arma el reporte HTML completo a partir de bloques declarativos."""
     err_html, stacks = _errors(errors)
@@ -440,12 +442,16 @@ def render_page(*, title, subtitle='', refresh_seconds=1200, lang='es',
         '<!DOCTYPE html>\n<html lang="' + lang + '">\n<head>\n'
         '<meta charset="UTF-8">\n'
         f'<meta http-equiv="refresh" content="{refresh_seconds}">\n'
+        '<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">\n'
+        '<meta http-equiv="Pragma" content="no-cache"><meta http-equiv="Expires" content="0">\n'
         f'<title>{esc(title)}</title>\n'
         '<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>\n'
         '<style>' + CSS + '</style>\n</head>\n<body>\n'
         '<header><div><h1>' + esc(title) + '</h1>'
         + (f'<small>{subtitle}</small>' if subtitle else '')
-        + '</div><div><select class="tz-select" id="tzSelect">' + TZ_OPTIONS + '</select></div></header>\n'
+        + '</div><div style="display:flex;align-items:center;gap:14px">'
+        + (f'<a href="{esc(home_url)}" style="color:rgba(255,255,255,.8);text-decoration:none;font-size:.85rem">← Inicio</a>' if home_url else '')
+        + '<select class="tz-select" id="tzSelect">' + TZ_OPTIONS + '</select></div></header>\n'
         '<div class="container">\n'
         + _cards(cards) + sections +
         '\n</div>\n'

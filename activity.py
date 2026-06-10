@@ -572,6 +572,9 @@ def perf_report(perf_data, daily_perf, refresh_seconds=1200):
 <head>
 <meta charset="UTF-8">
 <meta http-equiv="refresh" content="{refresh_seconds}">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>Scarab Precision — Rendimiento</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 <style>
@@ -633,7 +636,8 @@ def perf_report(perf_data, daily_perf, refresh_seconds=1200):
     <h1>Scarab Precision — Dashboard de Rendimiento</h1>
     <small>{perf_data["total_ops"]:,} operaciones analizadas &nbsp;|&nbsp;
       <nav style="display:inline">
-        <a href="activity.html">← Ver Actividad</a>
+        <a href="index.html">← Inicio</a> &nbsp;·&nbsp;
+        <a href="activity.html">Ver Actividad</a>
       </nav>
     </small>
   </div>
@@ -1377,6 +1381,9 @@ def html_report(data, daily, max_reports=60, top_farms_n=60, refresh_seconds=120
 <head>
 <meta charset="UTF-8">
 <meta http-equiv="refresh" content="{refresh_seconds}">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>Scarab Precision — Actividad</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 <style>
@@ -1491,6 +1498,10 @@ def html_report(data, daily, max_reports=60, top_farms_n=60, refresh_seconds=120
     <small>precision-8443.log &nbsp;|&nbsp;
       Último reporte: <span class="ts-hms" data-utc="{last_event_iso}">{last_event}</span>
       &nbsp;|&nbsp; {data["total_events"]:,} líneas procesadas
+      &nbsp;|&nbsp; <nav style="display:inline">
+        <a href="index.html" style="color:rgba(255,255,255,.7)">← Inicio</a> ·
+        <a href="performance.html" style="color:rgba(255,255,255,.7)">Ver Rendimiento</a>
+      </nav>
     </small>
   </div>
   <div>
