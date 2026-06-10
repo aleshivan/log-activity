@@ -17,6 +17,7 @@ performance.html
 *.html.gz
 *.pkl
 .report_cache.pkl
+out
 
 # Configuración local de Claude
 .claude/settings.local.json
