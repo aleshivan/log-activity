@@ -1259,7 +1259,12 @@ sel.addEventListener('change', () => applyTz(sel.value));
   if (tzSel) tzSel.addEventListener('change', () => rebuild(tzSel.value));
 }})();
 </script>
-<script>if(window.top!==window.self){{var _h=document.querySelector('header');if(_h)_h.style.display='none';}}</script>
+<script>
+if(window.top!==window.self){{var _h=document.querySelector('header');if(_h)_h.style.display='none';}}
+function _scarabSetTz(tz){{var s=document.getElementById('tzSelect');if(s&&tz&&s.value!==tz){{s.value=tz;s.dispatchEvent(new Event('change'));}}}}
+window.addEventListener('storage',function(e){{if(e.key==='scarab_tz')_scarabSetTz(e.newValue);}});
+window.addEventListener('message',function(e){{if(e.data&&e.data.scarabTz)_scarabSetTz(e.data.scarabTz);}});
+</script>
 </body>
 </html>'''
 
@@ -1994,7 +1999,12 @@ def html_report(data, daily, max_reports=60, top_farms_n=60, refresh_seconds=120
   if (tzSel) tzSel.addEventListener('change', () => rebuild(tzSel.value));
 }})();
 </script>
-<script>if(window.top!==window.self){{var _h=document.querySelector('header');if(_h)_h.style.display='none';}}</script>
+<script>
+if(window.top!==window.self){{var _h=document.querySelector('header');if(_h)_h.style.display='none';}}
+function _scarabSetTz(tz){{var s=document.getElementById('tzSelect');if(s&&tz&&s.value!==tz){{s.value=tz;s.dispatchEvent(new Event('change'));}}}}
+window.addEventListener('storage',function(e){{if(e.key==='scarab_tz')_scarabSetTz(e.newValue);}});
+window.addEventListener('message',function(e){{if(e.data&&e.data.scarabTz)_scarabSetTz(e.data.scarabTz);}});
+</script>
 </body>
 </html>'''
 
@@ -2047,10 +2057,24 @@ def index_html(reports, refresh_seconds=1200):
   .tab{{background:none;border:none;color:#bcd8c9;font-family:inherit;font-size:.95rem;font-weight:600;padding:13px 24px;cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-3px}}
   .tab:hover{{color:#fff}}
   .tab.active{{color:#fff;border-bottom-color:#f2b705;background:rgba(255,255,255,.07)}}
+  .tzsh{{background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:8px;padding:6px 10px;font-family:inherit;font-size:.85rem;cursor:pointer;outline:none}}
+  .tzsh option{{color:#111}}
   .frames{{flex:1;position:relative}}
   .frame{{position:absolute;inset:0;width:100%;height:100%;border:none;background:#f9f9f9}}
 </style></head><body>
-<header><h1>Scarab Precision — Reportes</h1></header>
+<header style="display:flex;justify-content:space-between;align-items:center;gap:16px">
+  <h1>Scarab Precision — Reportes</h1>
+  <select id="tzShell" class="tzsh">
+    <option value="UTC">UTC</option>
+    <option value="America/Bogota">GMT-5 — Colombia</option>
+    <option value="America/Lima">GMT-5 — Perú</option>
+    <option value="America/New_York">GMT-5/-4 — New York</option>
+    <option value="America/Mexico_City">GMT-6/-5 — México</option>
+    <option value="America/Santiago">GMT-4/-3 — Chile</option>
+    <option value="Africa/Nairobi">GMT+3 — Nairobi</option>
+    <option value="Europe/Madrid">GMT+1/+2 — Madrid</option>
+  </select>
+</header>
 <div class="tabs">{tabs}</div>
 <div class="frames">{frames}</div>
 <script>
@@ -2071,9 +2095,24 @@ def index_html(reports, refresh_seconds=1200):
   var saved=localStorage.getItem(KEY);
   var valid=tabs.some(function(t){{ return t.dataset.src===saved; }});
   activate(valid ? saved : '{first}');
+
+  // Selector de zona horaria del shell -> se propaga a los reportes (iframes) vía
+  // localStorage; cada reporte escucha el evento 'storage' y re-renderiza al instante.
+  var TZ='scarab_tz', tzSel=document.getElementById('tzShell');
+  var savedTz=localStorage.getItem(TZ)||'UTC';
+  var o=tzSel.querySelector('option[value="'+savedTz+'"]'); if(o)o.selected=true;
+  tzSel.addEventListener('change', function(){{
+    localStorage.setItem(TZ, tzSel.value);  // para frames que se carguen luego (+ evento storage en http)
+    frames.forEach(function(f){{ try{{ if(f.contentWindow) f.contentWindow.postMessage({{scarabTz: tzSel.value}}, '*'); }}catch(_e){{}} }});
+  }});
 }})();
 </script>
-<script>if(window.top!==window.self){{var _h=document.querySelector('header');if(_h)_h.style.display='none';}}</script>
+<script>
+if(window.top!==window.self){{var _h=document.querySelector('header');if(_h)_h.style.display='none';}}
+function _scarabSetTz(tz){{var s=document.getElementById('tzSelect');if(s&&tz&&s.value!==tz){{s.value=tz;s.dispatchEvent(new Event('change'));}}}}
+window.addEventListener('storage',function(e){{if(e.key==='scarab_tz')_scarabSetTz(e.newValue);}});
+window.addEventListener('message',function(e){{if(e.data&&e.data.scarabTz)_scarabSetTz(e.data.scarabTz);}});
+</script>
 </body></html>'''
 
 
