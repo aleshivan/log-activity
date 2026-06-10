@@ -11,7 +11,7 @@ constante plana (sin escapar llaves de f-string).
 
 import json
 
-from .output import esc
+from .output import esc, generated_at_iso
 
 TZ_OPTIONS = '''
   <option value="UTC">UTC</option>
@@ -80,7 +80,63 @@ CSS = '''
   .pg-btn{background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe;border-radius:6px;padding:4px 10px;font-size:.8rem;cursor:pointer;font-weight:600}
   .pg-btn:disabled{opacity:.4;cursor:default}
   .pg-info{font-size:.8rem;color:#666}
+  .genstamp{text-align:center;color:#9aa6a0;font-size:.74rem;padding:8px 0 28px}
 '''
+
+# Fuente y tema visual "Verde Scarab" (handoff de diseño). Se aplica como override
+# sobre el CSS base de arriba: reusa los mismos nombres de clase del motor.
+FONT_LINK = ('<link href="https://fonts.googleapis.com/css2?family=Archivo:'
+             'wght@400;500;600;700;800&display=swap" rel="stylesheet">')
+
+THEME_CSS = '''
+  /* ===== Tema Verde Scarab (override) ===== */
+  :root{
+    --green:#12613f;--green-hover:#0b4e31;--green-data:#117c52;--lime:#8ac465;
+    --yellow:#f2b705;--teal:#04a6b7;--navy:#003153;--alert:#b54334;
+    --bg:#f9f9f9;--ink:#1d2b24;--ink2:#5d6f66;--cb:#dde7e1;
+  }
+  body{font-family:'Archivo',system-ui,-apple-system,BlinkMacSystemFont,sans-serif;background:var(--bg);color:var(--ink)}
+  header{background:var(--green);border-bottom:3px solid var(--yellow)}
+  header h1{color:#fff;font-weight:700;letter-spacing:-.01em}
+  header small,header .sub{color:#bcd8c9}
+  header a{color:#bcd8c9} header a:hover{color:#fff}
+  .tz-select{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);color:#fff}
+  .tz-select option{background:var(--green);color:#fff}
+  .card{border:1px solid var(--cb);box-shadow:0 1px 3px rgba(6,67,42,.05)}
+  .card .num{color:var(--navy);font-variant-numeric:tabular-nums}
+  .card .lbl{color:var(--ink2);text-transform:uppercase;letter-spacing:.08em;font-weight:600}
+  .card:has(.num.amber){background:#fdf8ea;border-color:#ecc94b}
+  .card:has(.num.amber) .num{color:#d69a07}
+  .card:has(.num.red){background:#fdf2f0;border-color:#e6988f}
+  .card:has(.num.red) .num{color:var(--alert)}
+  .card:has(.num.green){background:#eef8f2;border-color:#93c7ab}
+  .card:has(.num.green) .num{color:var(--green-data)}
+  .day-card{background:#fbfbfb;border:1px solid #e9e9e9;box-shadow:none}
+  .day-card .num{color:var(--navy)} .day-card .num.amber{color:#d69a07}
+  .day-card .num.red{color:var(--alert)} .day-card .num.green{color:var(--green-data)}
+  .section{border:1px solid var(--cb);box-shadow:0 1px 3px rgba(6,67,42,.05)}
+  .section h2{color:#111;border-bottom:2px solid #e3ebe6}
+  th{background:#f0f2f1;color:#80878d;letter-spacing:.06em}
+  tbody tr:nth-child(odd){background:#f6f7f7}
+  tbody tr:hover{background:#e7f0eb}
+  .day-nav,.pg-btn{background:var(--green);color:#fff;border:1px solid var(--green)}
+  .day-nav:hover,.pg-btn:hover:not(:disabled){background:var(--green-hover)}
+  .day-nav:disabled,.pg-btn:disabled{background:#c5d2cb;border-color:#c5d2cb;opacity:1}
+  .err-filter:focus{border-color:var(--lime)}
+  a{color:var(--green-data)}
+  .genstamp{text-align:center;color:#9aa6a0;font-size:.74rem;padding:8px 0 28px}
+'''
+
+# Script para reportes que se cargan dentro del shell de tabs: oculta su propia
+# cabecera cuando va embebido y re-renderiza al recibir el tz del shell, vía el
+# evento 'storage' (clave scarab_tz, mismo origen) o postMessage (frame recién
+# cargado). Asume un <select id="tzSelect"> con su listener de 'change'.
+EMBED_JS = '''<script>
+if(window.top!==window.self){var _h=document.querySelector('header');if(_h)_h.style.display='none';}
+function _scarabSetTz(tz){var s=document.getElementById('tzSelect');if(s&&tz&&s.value!==tz){s.value=tz;s.dispatchEvent(new Event('change'));}}
+window.addEventListener('storage',function(e){if(e.key==='scarab_tz')_scarabSetTz(e.newValue);});
+window.addEventListener('message',function(e){if(e.data&&e.data.scarabTz)_scarabSetTz(e.data.scarabTz);});
+</script>'''
 
 # JS: lee los JSON islands (#dailySeries, #dailyMetrics, #stackData) y arma todo.
 JS = '''
@@ -89,7 +145,7 @@ JS = '''
     var el = document.getElementById(id);
     return el ? JSON.parse(el.textContent) : dflt;
   };
-  var TZ_KEY = 'logreport_tz', DAY_KEY = 'logreport_day';
+  var TZ_KEY = 'scarab_tz', DAY_KEY = 'logreport_day';
   var pad = function (n) { return String(n).padStart(2, '0'); };
   var labels = Array.from({ length: 24 }, function (_, h) { return pad(h) + 'h'; });
 
@@ -264,6 +320,19 @@ JS = '''
     var opt = tzSel.querySelector('option[value="' + tz0 + '"]'); if (opt) opt.selected = true;
     tzSel.addEventListener('change', function () { applyTz(tzSel.value); rebuildDaily(tzSel.value); });
   }
+
+  // ── modo embebido: el shell de tabs oculta nuestra cabecera y nos dirige el tz ──
+  if (window.top !== window.self) {
+    var hdr = document.querySelector('header'); if (hdr) hdr.style.display = 'none';
+  }
+  function setTzExternal(tz) {
+    if (!tz || tz === (tzSel ? tzSel.value : tz0)) return;
+    if (tzSel) { var o = tzSel.querySelector('option[value="' + tz + '"]'); if (o) tzSel.value = tz; }
+    applyTz(tz); rebuildDaily(tz);
+  }
+  window.addEventListener('storage', function (e) { if (e.key === TZ_KEY) setTzExternal(e.newValue); });
+  window.addEventListener('message', function (e) { if (e.data && e.data.scarabTz) setTzExternal(e.data.scarabTz); });
+
   applyTz(tz0);
   if (SERIES) {
     buildCards();
@@ -368,45 +437,94 @@ def _errors(errors):
     return html, stack_store
 
 
-INDEX_CSS = '''
+# Shell de tabs (Verde Scarab): cabecera verde + barra de tabs agrupadas por
+# sistema + selector de zona horaria global que se propaga a los reportes
+# embebidos. Los reportes ocultan su propia cabecera y re-renderizan al instante.
+SHELL_CSS = '''
   *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f4f6f9;color:#333}
-  header{background:#1a2744;color:#fff;padding:28px 32px}
-  header h1{font-size:1.5rem;font-weight:600}
-  header small{opacity:.7;font-size:.9rem}
-  .container{max-width:900px;margin:32px auto;padding:0 16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:20px}
-  .idx-card{background:#fff;border-radius:10px;padding:24px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
-  .idx-card h2{font-size:1.1rem;color:#1a2744;margin-bottom:14px;border-bottom:2px solid #e8ecf0;padding-bottom:8px}
-  .idx-links{display:flex;flex-direction:column;gap:8px}
-  .idx-links a{display:flex;justify-content:space-between;align-items:center;text-decoration:none;
-    background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe;border-radius:8px;padding:10px 14px;font-size:.92rem;font-weight:600}
-  .idx-links a:hover{background:#c7d2fe}
-  .idx-links a .arrow{opacity:.6}
+  html,body{height:100%}
+  body{font-family:'Archivo',system-ui,-apple-system,BlinkMacSystemFont,sans-serif;display:flex;flex-direction:column;background:#f9f9f9;color:#1d2b24}
+  header{background:#12613f;color:#fff;padding:14px 28px;flex:none;display:flex;justify-content:space-between;align-items:center;gap:16px}
+  header h1{font-size:1.25rem;font-weight:700;letter-spacing:-.01em}
+  header small{display:block;color:#bcd8c9;font-weight:400;font-size:.82rem;margin-top:2px}
+  .tzsh{background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:8px;padding:6px 10px;font-family:inherit;font-size:.85rem;cursor:pointer;outline:none}
+  .tzsh option{color:#111}
+  .tabs{display:flex;align-items:center;flex-wrap:wrap;gap:2px;background:#0e4d32;padding:0 16px;flex:none;border-bottom:3px solid #f2b705}
+  .tab-group{color:#8fb8a3;font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;padding:0 12px 0 8px}
+  .tab-group:not(:first-child){border-left:1px solid rgba(255,255,255,.12);margin-left:6px}
+  .tab{background:none;border:none;color:#bcd8c9;font-family:inherit;font-size:.92rem;font-weight:600;padding:13px 20px;cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-3px}
+  .tab:hover{color:#fff}
+  .tab.active{color:#fff;border-bottom-color:#f2b705;background:rgba(255,255,255,.07)}
+  .frames{flex:1;position:relative}
+  .frame{position:absolute;inset:0;width:100%;height:100%;border:none;background:#f9f9f9}
+'''
+
+SHELL_JS = '''
+(function () {
+  var TAB_KEY = 'scarab_tab', TZ_KEY = 'scarab_tz';
+  var tabs = [].slice.call(document.querySelectorAll('.tab'));
+  var frames = [].slice.call(document.querySelectorAll('.frame'));
+  function activate(src) {
+    tabs.forEach(function (t) { t.classList.toggle('active', t.dataset.src === src); });
+    frames.forEach(function (f) {
+      var on = f.dataset.frame === src;
+      if (on && !f.src) f.src = f.dataset.frame;   // carga perezosa, una sola vez
+      f.style.display = on ? 'block' : 'none';
+    });
+    localStorage.setItem(TAB_KEY, src);
+  }
+  tabs.forEach(function (t) { t.addEventListener('click', function () { activate(t.dataset.src); }); });
+  var saved = localStorage.getItem(TAB_KEY);
+  var valid = tabs.some(function (t) { return t.dataset.src === saved; });
+  activate(valid ? saved : (tabs[0] && tabs[0].dataset.src));
+
+  // Zona horaria global -> se propaga a los reportes (iframes): localStorage dispara
+  // el evento 'storage' en frames del mismo origen, y postMessage cubre el recién cargado.
+  var tzSel = document.getElementById('tzShell');
+  var savedTz = localStorage.getItem(TZ_KEY) || 'UTC';
+  var o = tzSel.querySelector('option[value="' + savedTz + '"]'); if (o) o.selected = true;
+  tzSel.addEventListener('change', function () {
+    localStorage.setItem(TZ_KEY, tzSel.value);
+    frames.forEach(function (f) {
+      try { if (f.contentWindow) f.contentWindow.postMessage({ scarabTz: tzSel.value }, '*'); } catch (_e) {}
+    });
+  });
+})();
 '''
 
 
 def render_index(systems, *, title='Reportes', subtitle='', refresh_seconds=1200, lang='es'):
-    """Landing page que enlaza los reportes de cada sistema.
+    """Shell con tabs que embebe los reportes de cada sistema y comparte un
+    selector de zona horaria global.
 
     systems = [{'title': str, 'links': [(label, href), ...]}]
+
+    Las tabs se agrupan por sistema; cada reporte se carga en un iframe (perezoso)
+    y oculta su propia cabecera al detectar que va embebido.
     """
-    cards = ''
+    seen, tabs_html, frames_html = set(), '', ''
     for s in systems:
-        links = ''.join(
-            f'<a href="{esc(href)}">{esc(label)}<span class="arrow">→</span></a>'
-            for label, href in s['links']
-        )
-        cards += (f'<div class="idx-card"><h2>{esc(s["title"])}</h2>'
-                  f'<div class="idx-links">{links}</div></div>')
+        tabs_html += f'<span class="tab-group">{esc(s["title"])}</span>'
+        for label, href in s['links']:
+            tabs_html += f'<button class="tab" data-src="{esc(href)}">{esc(label)}</button>'
+            if href not in seen:
+                seen.add(href)
+                frames_html += (f'<iframe class="frame" data-frame="{esc(href)}" '
+                                f'title="{esc(s["title"])} — {esc(label)}"></iframe>')
     return (
         '<!DOCTYPE html>\n<html lang="' + lang + '">\n<head>\n<meta charset="UTF-8">\n'
         f'<meta http-equiv="refresh" content="{refresh_seconds}">\n'
         '<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">\n'
         '<meta http-equiv="Pragma" content="no-cache"><meta http-equiv="Expires" content="0">\n'
-        f'<title>{esc(title)}</title>\n<style>' + INDEX_CSS + '</style>\n</head>\n<body>\n'
-        f'<header><h1>{esc(title)}</h1>'
-        + (f'<small>{esc(subtitle)}</small>' if subtitle else '')
-        + '</header>\n<div class="container">\n' + cards + '\n</div>\n</body>\n</html>'
+        f'<title>{esc(title)}</title>\n' + FONT_LINK + '\n'
+        '<style>' + SHELL_CSS + '</style>\n</head>\n<body>\n'
+        f'<header><div><h1>{esc(title)}</h1>'
+        + (f'<small>{esc(subtitle)} &nbsp;·&nbsp; Generado: {generated_at_iso()}</small>'
+           if subtitle else f'<small>Generado: {generated_at_iso()}</small>')
+        + '</div>\n<select id="tzShell" class="tzsh">' + TZ_OPTIONS + '</select>\n</header>\n'
+        f'<div class="tabs">{tabs_html}</div>\n'
+        f'<div class="frames">{frames_html}</div>\n'
+        '<script>' + SHELL_JS + '</script>\n</body>\n</html>'
     )
 
 
@@ -445,8 +563,9 @@ def render_page(*, title, subtitle='', refresh_seconds=1200, lang='es', home_url
         '<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">\n'
         '<meta http-equiv="Pragma" content="no-cache"><meta http-equiv="Expires" content="0">\n'
         f'<title>{esc(title)}</title>\n'
+        + FONT_LINK + '\n'
         '<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>\n'
-        '<style>' + CSS + '</style>\n</head>\n<body>\n'
+        '<style>' + CSS + THEME_CSS + '</style>\n</head>\n<body>\n'
         '<header><div><h1>' + esc(title) + '</h1>'
         + (f'<small>{subtitle}</small>' if subtitle else '')
         + '</div><div style="display:flex;align-items:center;gap:14px">'
@@ -455,6 +574,7 @@ def render_page(*, title, subtitle='', refresh_seconds=1200, lang='es', home_url
         '<div class="container">\n'
         + _cards(cards) + sections +
         '\n</div>\n'
+        + f'<footer class="genstamp">Generado: {generated_at_iso()}</footer>\n'
         + islands +
         '<script>' + JS + '</script>\n</body>\n</html>'
     )

@@ -11,13 +11,13 @@ live in a project profile module (see profiles/scarab.py for the reference one).
 """
 
 from .cache import CACHE_VERSION, Profile, build_report_data
-from .output import esc, write_report
+from .output import esc, generated_at_iso, write_report
 from .parsing import LOG_PATTERN, parse_file, parse_logs, parse_sorted
 from .stats import merge_counts, stats
 
 __all__ = [
     'CACHE_VERSION', 'Profile', 'build_report_data',
-    'esc', 'write_report',
+    'esc', 'generated_at_iso', 'write_report',
     'LOG_PATTERN', 'parse_file', 'parse_logs', 'parse_sorted',
     'merge_counts', 'stats',
 ]

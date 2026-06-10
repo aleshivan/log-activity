@@ -1,5 +1,6 @@
 """HTML output helpers: escaping and atomic write + precompressed .gz sibling."""
 
+import datetime
 import gzip
 import html as html_mod
 import os
@@ -7,6 +8,22 @@ import os
 
 def esc(s):
     return html_mod.escape(str(s))
+
+
+_GENERATED_AT = None
+
+
+def generated_at_iso():
+    """Marca de generación del run en ISO 8601 UTC (p.ej. 2026-06-10T16:02:33Z).
+
+    Se calcula una sola vez por proceso, así todos los reportes de un mismo
+    `run.py` comparten exactamente el mismo instante.
+    """
+    global _GENERATED_AT
+    if _GENERATED_AT is None:
+        now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
+        _GENERATED_AT = now.strftime('%Y-%m-%dT%H:%M:%SZ')
+    return _GENERATED_AT
 
 
 def write_report(path, content):

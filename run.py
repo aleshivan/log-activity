@@ -14,12 +14,12 @@ import importlib
 import os
 import sys
 
-from logreport.output import write_report
+from logreport.output import generated_at_iso, write_report
 from logreport.render import render_index
 from logreport.runner import load_config, run_plugin
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PROFILE_NAMES = ['precision', 'dashboard']
+PROFILE_NAMES = ['precision', 'precision_adm', 'precision_mbl', 'dashboard']
 
 
 def _config_path(name):
@@ -61,6 +61,11 @@ def main():
         sys.exit(2)
     cmd = sys.argv[1]
 
+    # Logstamp del run en ISO 8601 UTC (mismo instante que el sello de los reportes,
+    # útil al redirigir la salida a un log bajo cron).
+    stamp = generated_at_iso()
+    print(f'━━━ run {cmd} @ {stamp} ━━━')
+
     if cmd == 'index':
         build_index()
     elif cmd == 'all':
@@ -78,6 +83,8 @@ def main():
             sys.exit(2)
         run_plugin(plugin, _config_path(cmd))
         build_index()  # mantener el índice al día tras cada generación
+
+    print(f'━━━ fin @ {stamp} ━━━')
 
 
 if __name__ == '__main__':

@@ -12,9 +12,12 @@ import os
 import re
 from collections import defaultdict
 
-from logreport import (Profile, build_report_data, esc,
+from logreport import (Profile, build_report_data, esc, generated_at_iso,
                        merge_counts as _merge_counts,
                        stats as _stats, write_report as _write_report)
+# Tema visual "Verde Scarab" + integración con el shell de tabs (fuente única en
+# logreport.render, compartida con los reportes del motor declarativo).
+from logreport.render import EMBED_JS, FONT_LINK, THEME_CSS
 
 REPORT_START = re.compile(r'\[Report request\]\s+(.*)')
 PDF_END      = re.compile(r'\[PDF - (.+?)\]\s+End\s+\[(.+?),\s+Generated\s+(\d+)\s+label\(s\)\s+in\s+(\d+)ms\]')
@@ -519,7 +522,8 @@ def _login_rows(logins):
 
 # ── Performance HTML report ────────────────────────────────────────────────────
 
-def perf_report(perf_data, daily_perf, refresh_seconds=1200):
+def perf_report(perf_data, daily_perf, refresh_seconds=1200,
+                label='Scarab Precision', activity_name='activity.html'):
     dperf_json = json.dumps(daily_perf)  # UTC series; days bucketed client-side per tz
 
     hs     = perf_data['hourly_stats']
@@ -575,7 +579,8 @@ def perf_report(perf_data, daily_perf, refresh_seconds=1200):
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>Scarab Precision — Rendimiento</title>
+<title>{label} — Rendimiento</title>
+{FONT_LINK}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 <style>
   *{{box-sizing:border-box;margin:0;padding:0}}
@@ -628,16 +633,17 @@ def perf_report(perf_data, daily_perf, refresh_seconds=1200):
   .day-charts{{display:grid;grid-template-columns:2fr 1fr;gap:20px}}
   @media(max-width:900px){{.day-charts{{grid-template-columns:1fr}}}}
   .day-chart-wrap{{position:relative;height:300px}}
+{THEME_CSS}
 </style>
 </head>
 <body>
 <header>
   <div>
-    <h1>Scarab Precision — Dashboard de Rendimiento</h1>
+    <h1>{label} — Dashboard de Rendimiento</h1>
     <small>{perf_data["total_ops"]:,} operaciones analizadas &nbsp;|&nbsp;
       <nav style="display:inline">
         <a href="index.html">← Inicio</a> &nbsp;·&nbsp;
-        <a href="activity.html">Ver Actividad</a>
+        <a href="{activity_name}">Ver Actividad</a>
       </nav>
     </small>
   </div>
@@ -1085,6 +1091,8 @@ sel.addEventListener('change', () => applyTz(sel.value));
   if (tzSel) tzSel.addEventListener('change', () => rebuild(tzSel.value));
 }})();
 </script>
+<footer class="genstamp">Generado: {generated_at_iso()}</footer>
+{EMBED_JS}
 </body>
 </html>'''
 
@@ -1317,7 +1325,8 @@ document.querySelectorAll('.copy-btn').forEach(btn => {
     return summary_html + cats_html + stack_island + copy_js
 
 
-def html_report(data, daily, max_reports=60, top_farms_n=60, refresh_seconds=1200):
+def html_report(data, daily, max_reports=60, top_farms_n=60, refresh_seconds=1200,
+                label='Scarab Precision', log_name='precision-8443.log', perf_name='performance.html'):
     hourly = data['hourly']
     hours, counts = list(hourly.keys()), list(hourly.values())
     max_count = max(counts) if counts else 1
@@ -1384,7 +1393,8 @@ def html_report(data, daily, max_reports=60, top_farms_n=60, refresh_seconds=120
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>Scarab Precision — Actividad</title>
+<title>{label} — Actividad</title>
+{FONT_LINK}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 <style>
   *{{box-sizing:border-box;margin:0;padding:0}}
@@ -1489,18 +1499,19 @@ def html_report(data, daily, max_reports=60, top_farms_n=60, refresh_seconds=120
   .day-card .delta{{font-size:.78rem;margin-top:5px;font-weight:600;min-height:1em}}
   .delta.up{{color:#dc2626}} .delta.down{{color:#16a34a}} .delta.flat{{color:#9ca3af}}
   .day-chart-wrap{{position:relative;height:300px}}
+{THEME_CSS}
 </style>
 </head>
 <body>
 <header style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
   <div>
-    <h1>Scarab Precision — Log de Actividad</h1>
-    <small>precision-8443.log &nbsp;|&nbsp;
+    <h1>{label} — Log de Actividad</h1>
+    <small>{log_name} &nbsp;|&nbsp;
       Último reporte: <span class="ts-hms" data-utc="{last_event_iso}">{last_event}</span>
       &nbsp;|&nbsp; {data["total_events"]:,} líneas procesadas
       &nbsp;|&nbsp; <nav style="display:inline">
         <a href="index.html" style="color:rgba(255,255,255,.7)">← Inicio</a> ·
-        <a href="performance.html" style="color:rgba(255,255,255,.7)">Ver Rendimiento</a>
+        <a href="{perf_name}" style="color:rgba(255,255,255,.7)">Ver Rendimiento</a>
       </nav>
     </small>
   </div>
@@ -1814,6 +1825,8 @@ def html_report(data, daily, max_reports=60, top_farms_n=60, refresh_seconds=120
   if (tzSel) tzSel.addEventListener('change', () => rebuild(tzSel.value));
 }})();
 </script>
+<footer class="genstamp">Generado: {generated_at_iso()}</footer>
+{EMBED_JS}
 </body>
 </html>'''
 
