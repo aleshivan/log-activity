@@ -1259,6 +1259,7 @@ sel.addEventListener('change', () => applyTz(sel.value));
   if (tzSel) tzSel.addEventListener('change', () => rebuild(tzSel.value));
 }})();
 </script>
+<script>if(window.top!==window.self){{var _h=document.querySelector('header');if(_h)_h.style.display='none';}}</script>
 </body>
 </html>'''
 
@@ -1993,6 +1994,7 @@ def html_report(data, daily, max_reports=60, top_farms_n=60, refresh_seconds=120
   if (tzSel) tzSel.addEventListener('change', () => rebuild(tzSel.value));
 }})();
 </script>
+<script>if(window.top!==window.self){{var _h=document.querySelector('header');if(_h)_h.style.display='none';}}</script>
 </body>
 </html>'''
 
@@ -2017,34 +2019,61 @@ def _write_report(path, content):
 
 
 def index_html(reports, refresh_seconds=1200):
-    """Landing simple que enlaza los reportes. reports = [(label, href), ...]."""
-    links = ''.join(
-        f'<a href="{esc(href)}">{esc(label)} <span style="opacity:.6">→</span></a>'
+    """Shell con tabs: header verde + barra de tabs + iframe que carga el reporte
+    activo. reports = [(label, href), ...]. Los reportes ocultan su propio header
+    cuando van embebidos (detectan el iframe), así no hay doble cabecera."""
+    tabs = ''.join(
+        f'<button class="tab" data-src="{esc(href)}">{esc(label)}</button>'
         for label, href in reports
     )
+    frames = ''.join(
+        f'<iframe class="frame" data-frame="{esc(href)}" title="{esc(label)}"></iframe>'
+        for label, href in reports
+    )
+    first = esc(reports[0][1]) if reports else ''
     return f'''<!DOCTYPE html>
 <html lang="es"><head><meta charset="UTF-8">
 {FONT_LINK}
-<meta http-equiv="refresh" content="{refresh_seconds}">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache"><meta http-equiv="Expires" content="0">
 <title>Scarab Precision — Reportes</title>
 <style>
   *{{box-sizing:border-box;margin:0;padding:0}}
-  body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f4f6f9;color:#333}}
-  header{{background:#1a2744;color:#fff;padding:28px 32px}}
-  header h1{{font-size:1.4rem;font-weight:600}}
-  .container{{max-width:560px;margin:32px auto;padding:0 16px}}
-  .idx-card{{background:#fff;border-radius:10px;padding:24px;box-shadow:0 1px 4px rgba(0,0,0,.08)}}
-  .idx-card h2{{font-size:1.1rem;color:#1a2744;margin-bottom:14px;border-bottom:2px solid #e8ecf0;padding-bottom:8px}}
-  .idx-links{{display:flex;flex-direction:column;gap:8px}}
-  .idx-links a{{display:flex;justify-content:space-between;text-decoration:none;background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe;border-radius:8px;padding:10px 14px;font-weight:600}}
-  .idx-links a:hover{{background:#c7d2fe}}
-{THEME_CSS}
+  html,body{{height:100%}}
+  body{{font-family:'Archivo',system-ui,-apple-system,sans-serif;display:flex;flex-direction:column;background:#f9f9f9}}
+  header{{background:#12613f;color:#fff;padding:14px 28px;flex:none}}
+  header h1{{font-size:1.25rem;font-weight:700;letter-spacing:-.01em}}
+  .tabs{{display:flex;gap:2px;background:#0e4d32;padding:0 16px;flex:none;border-bottom:3px solid #f2b705}}
+  .tab{{background:none;border:none;color:#bcd8c9;font-family:inherit;font-size:.95rem;font-weight:600;padding:13px 24px;cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-3px}}
+  .tab:hover{{color:#fff}}
+  .tab.active{{color:#fff;border-bottom-color:#f2b705;background:rgba(255,255,255,.07)}}
+  .frames{{flex:1;position:relative}}
+  .frame{{position:absolute;inset:0;width:100%;height:100%;border:none;background:#f9f9f9}}
 </style></head><body>
 <header><h1>Scarab Precision — Reportes</h1></header>
-<div class="container"><div class="idx-card"><h2>Precision</h2>
-<div class="idx-links">{links}</div></div></div>
+<div class="tabs">{tabs}</div>
+<div class="frames">{frames}</div>
+<script>
+(function(){{
+  var KEY='scarab_tab';
+  var tabs=[].slice.call(document.querySelectorAll('.tab'));
+  var frames=[].slice.call(document.querySelectorAll('.frame'));
+  function activate(src){{
+    tabs.forEach(function(t){{ t.classList.toggle('active', t.dataset.src===src); }});
+    frames.forEach(function(f){{
+      var on = f.dataset.frame===src;
+      if(on && !f.src) f.src = f.dataset.frame;   // carga perezosa, una sola vez
+      f.style.display = on ? 'block' : 'none';
+    }});
+    localStorage.setItem(KEY, src);
+  }}
+  tabs.forEach(function(t){{ t.addEventListener('click', function(){{ activate(t.dataset.src); }}); }});
+  var saved=localStorage.getItem(KEY);
+  var valid=tabs.some(function(t){{ return t.dataset.src===saved; }});
+  activate(valid ? saved : '{first}');
+}})();
+</script>
+<script>if(window.top!==window.self){{var _h=document.querySelector('header');if(_h)_h.style.display='none';}}</script>
 </body></html>'''
 
 
