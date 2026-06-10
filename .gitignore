@@ -11,7 +11,8 @@ precision-8443.log.*
 *.log
 *.log.*.gz
 
-# Salidas generadas por activity.py
+# Salidas generadas (directorio de output completo)
+out/
 activity.html
 performance.html
 *.html.gz
