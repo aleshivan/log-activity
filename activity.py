@@ -1,28 +1,20 @@
 #!/usr/bin/env python3
-"""Parse Scarab Precision log files and generate an HTML activity report."""
+"""Scarab Precision report profile — log patterns, extraction and HTML rendering.
+
+Runs on the generic `logreport` engine (parsing, incremental .gz cache, output).
+This module is the per-project profile + entry point; copy it as a starting point
+for other projects.
+"""
 
 import configparser
-import glob
-import gzip
-import hashlib
-import html as html_mod
 import json
 import os
-import pickle
 import re
 from collections import defaultdict
-from datetime import datetime
 
-# Bump when parsing/categorization/aggregation logic changes, to invalidate the
-# cached aggregates of the immutable .gz logs.
-CACHE_VERSION = 1
-
-LOG_PATTERN = re.compile(
-    r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}[.]\d+)'  # timestamp
-    r'\s+(\w+)\s+\d+\s+---'                            # level + pid
-    r'\s+\[([^\]]+)\]'                                  # thread
-    r'\s+([\w.$]+)\s+:\s*(.*)$'                          # logger + message (space after : optional)
-)
+from logreport import (Profile, build_report_data, esc,
+                       merge_counts as _merge_counts,
+                       stats as _stats, write_report as _write_report)
 
 REPORT_START = re.compile(r'\[Report request\]\s+(.*)')
 PDF_END      = re.compile(r'\[PDF - (.+?)\]\s+End\s+\[(.+?),\s+Generated\s+(\d+)\s+label\(s\)\s+in\s+(\d+)ms\]')
@@ -32,109 +24,6 @@ FILE_DL      = re.compile(r'\[Files\]\s+File downloaded and removed\s+\.\.\.\s+(
 MAP_END      = re.compile(r'\[PDF - Maps\]\s+End\s+\[(.+?),\s+(\d+)\s+sheet\(s\)\]')
 
 FMT_PDF_MAP = 'PDF/Map'
-
-
-# ── Log parsing ────────────────────────────────────────────────────────────────
-
-def _parse_file(path):
-    """Yield parsed event dicts from a single log file (plain or .gz)."""
-    current = None
-    opener = gzip.open if path.endswith('.gz') else open
-    with opener(path, 'rt', errors='replace') as f:
-        for raw in f:
-            line = raw.rstrip('\n')
-            m = LOG_PATTERN.match(line.strip())
-            if m:
-                if current:
-                    yield current
-                ts_str, level, thread, logger, msg = m.groups()
-                try:
-                    ts = datetime.strptime(ts_str, '%Y-%m-%d %H:%M:%S.%f')
-                except ValueError:
-                    current = None
-                    continue
-                current = {
-                    'ts': ts, 'level': level, 'thread': thread,
-                    'logger': logger, 'msg': msg, 'extra': [],
-                }
-            elif current and line.strip():
-                current['extra'].append(line)
-    if current:
-        yield current
-
-
-def parse_logs(log_dir, pattern):
-    """Parse all log files matching pattern inside log_dir, sorted by timestamp."""
-    return _parse_sorted(glob.glob(os.path.join(log_dir, pattern)))
-
-
-def _parse_sorted(files):
-    events = []
-    for path in sorted(files):
-        events.extend(_parse_file(path))
-    events.sort(key=lambda e: e['ts'])
-    return events
-
-
-# ── Incremental aggregation cache ──────────────────────────────────────────────
-# Rotated .gz logs are immutable: aggregate them once, cache the result, and only
-# reprocess the live (uncompressed) log each run. Cuts the per-run cost ~5x.
-
-def _gz_signature(gz_files):
-    parts = []
-    for f in sorted(gz_files):
-        st = os.stat(f)
-        parts.append(f'{os.path.basename(f)}:{st.st_size}:{st.st_mtime_ns}')
-    return hashlib.sha256((f'v{CACHE_VERSION}|' + '|'.join(parts)).encode()).hexdigest()
-
-
-def _gz_partials(gz_files, cache_path, log):
-    """(raw_activity, scan_perf) for the immutable .gz logs, via a pickle cache."""
-    sig = _gz_signature(gz_files) if gz_files else f'v{CACHE_VERSION}|empty'
-    if cache_path and os.path.exists(cache_path):
-        try:
-            with open(cache_path, 'rb') as fh:
-                cached = pickle.load(fh)
-            if cached.get('sig') == sig:
-                log('  caché .gz: HIT (historia reutilizada)')
-                return cached['activity'], cached['scan']
-        except Exception:
-            pass
-    log('  caché .gz: MISS (reprocesando históricos)')
-    events = _parse_sorted(gz_files)
-    activity_raw = _accumulate_activity(events)
-    ops, logins, http = _scan_events(events)
-    scan = (ops, logins, dict(http))
-    if cache_path:
-        try:
-            tmp = cache_path + '.tmp'
-            with open(tmp, 'wb') as fh:
-                pickle.dump({'sig': sig, 'activity': activity_raw, 'scan': scan},
-                            fh, protocol=pickle.HIGHEST_PROTOCOL)
-            os.replace(tmp, cache_path)
-        except Exception:
-            pass
-    return activity_raw, scan
-
-
-def build_report_data(log_dir, pattern, cache_path=None, log=lambda _m: None):
-    """Parse logs into (data, perf_data), reusing cached aggregates for the
-    immutable .gz history and only reprocessing the live log each run."""
-    files = glob.glob(os.path.join(log_dir, pattern))
-    gz_files   = [f for f in files if f.endswith('.gz')]
-    live_files = [f for f in files if not f.endswith('.gz')]
-
-    act_gz, scan_gz = _gz_partials(gz_files, cache_path, log)
-
-    live_events = _parse_sorted(live_files)
-    act_live = _accumulate_activity(live_events)
-    ops_l, logins_l, http_l = _scan_events(live_events)
-
-    data = _finalize_activity(_merge_activity(act_gz, act_live))
-    perf_data = _perf_from_scan(scan_gz[0] + ops_l,
-                                scan_gz[1] + logins_l,
-                                _merge_counts(scan_gz[2], http_l))
-    return data, perf_data
 
 
 # ── Debug info extraction (used for ERROR-level detail panels) ─────────────────
@@ -387,13 +276,6 @@ def _accumulate_activity(events):
     }
 
 
-def _merge_counts(a, b):
-    out = dict(a)
-    for k, v in b.items():
-        out[k] = out.get(k, 0) + v
-    return out
-
-
 def _merge_activity(a, b):
     """Merge two raw activity aggregates (a precedes b in time)."""
     return {
@@ -483,16 +365,6 @@ _ZEBRA_PERF = re.compile(
 _LOGIN_PAT = re.compile(r"login success for user '(.+?)'")
 _NET_PAT   = re.compile(r'Retrieving file \.\.\. https?://')
 _ISO_FMT   = '%Y-%m-%dT%H:%M:%SZ'
-
-
-def _stats(ms_list):
-    if not ms_list:
-        return {'count': 0, 'avg': 0, 'p50': 0, 'p90': 0, 'p95': 0, 'max': 0}
-    s = sorted(ms_list)
-    n = len(s)
-    def p(pct): return s[min(int(n * pct), n - 1)]
-    return {'count': n, 'avg': int(sum(s) / n),
-            'p50': p(0.50), 'p90': p(0.90), 'p95': p(0.95), 'max': s[-1]}
 
 
 def _match_op(msg, ts):
@@ -1224,9 +1096,6 @@ CATEGORY_META = {
     'OTHER':           ('Otro',                  '#374151', '#f3f4f6', '#6b7280'),
 }
 
-def esc(s):
-    return html_mod.escape(str(s))
-
 def _render_err_meta(e):
     iso = e['ts'].strftime('%Y-%m-%dT%H:%M:%S.') + e['ts'].strftime('%f')[:3] + 'Z'
     ts  = e['ts'].strftime('%Y-%m-%d %H:%M:%S.') + e['ts'].strftime('%f')[:3]
@@ -1940,23 +1809,6 @@ def html_report(data, daily, max_reports=60, top_farms_n=60, refresh_seconds=120
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 
-def _write_report(path, content):
-    """Write the HTML and a precompressed .gz sibling (atomically, each).
-
-    nginx `gzip_static on` serves the .gz directly (Content-Encoding: gzip),
-    so the ~12 MB report transfers as ~0.2 MB without per-request CPU.
-    """
-    tmp = path + '.tmp'
-    with open(tmp, 'w') as f:
-        f.write(content)
-    os.replace(tmp, path)
-
-    gz_tmp = path + '.gz.tmp'
-    with gzip.open(gz_tmp, 'wt', encoding='utf-8') as f:
-        f.write(content)
-    os.replace(gz_tmp, path + '.gz')
-
-
 def _load_config():
     cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'activity.config')
     if not os.path.exists(cfg_path):
@@ -1985,8 +1837,15 @@ if __name__ == '__main__':
     log(f'Log dir : {log_dir}')
     log(f'Pattern : {pattern}')
 
+    profile = Profile(
+        accumulate=_accumulate_activity,
+        scan=_scan_events,
+        merge_activity=_merge_activity,
+        finalize_activity=_finalize_activity,
+        perf_from_scan=_perf_from_scan,
+    )
     cache_path = os.path.join(output_dir, '.report_cache.pkl')
-    data, perf_data = build_report_data(log_dir, pattern, cache_path, log)
+    data, perf_data = build_report_data(profile, log_dir, pattern, cache_path, log)
     log(f'  {data["total_events"]} log entries loaded')
 
     n_err  = sum(1 for e in data['errors'] if e['level'] == 'ERROR')
