@@ -350,6 +350,46 @@ def _errors(errors):
     return html, stack_store
 
 
+INDEX_CSS = '''
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f4f6f9;color:#333}
+  header{background:#1a2744;color:#fff;padding:28px 32px}
+  header h1{font-size:1.5rem;font-weight:600}
+  header small{opacity:.7;font-size:.9rem}
+  .container{max-width:900px;margin:32px auto;padding:0 16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:20px}
+  .idx-card{background:#fff;border-radius:10px;padding:24px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
+  .idx-card h2{font-size:1.1rem;color:#1a2744;margin-bottom:14px;border-bottom:2px solid #e8ecf0;padding-bottom:8px}
+  .idx-links{display:flex;flex-direction:column;gap:8px}
+  .idx-links a{display:flex;justify-content:space-between;align-items:center;text-decoration:none;
+    background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe;border-radius:8px;padding:10px 14px;font-size:.92rem;font-weight:600}
+  .idx-links a:hover{background:#c7d2fe}
+  .idx-links a .arrow{opacity:.6}
+'''
+
+
+def render_index(systems, *, title='Reportes', subtitle='', refresh_seconds=1200, lang='es'):
+    """Landing page que enlaza los reportes de cada sistema.
+
+    systems = [{'title': str, 'links': [(label, href), ...]}]
+    """
+    cards = ''
+    for s in systems:
+        links = ''.join(
+            f'<a href="{esc(href)}">{esc(label)}<span class="arrow">→</span></a>'
+            for label, href in s['links']
+        )
+        cards += (f'<div class="idx-card"><h2>{esc(s["title"])}</h2>'
+                  f'<div class="idx-links">{links}</div></div>')
+    return (
+        '<!DOCTYPE html>\n<html lang="' + lang + '">\n<head>\n<meta charset="UTF-8">\n'
+        f'<meta http-equiv="refresh" content="{refresh_seconds}">\n'
+        f'<title>{esc(title)}</title>\n<style>' + INDEX_CSS + '</style>\n</head>\n<body>\n'
+        f'<header><h1>{esc(title)}</h1>'
+        + (f'<small>{esc(subtitle)}</small>' if subtitle else '')
+        + '</header>\n<div class="container">\n' + cards + '\n</div>\n</body>\n</html>'
+    )
+
+
 def render_page(*, title, subtitle='', refresh_seconds=1200, lang='es',
                 cards=None, daily=None, tables=None, errors=None):
     """Arma el reporte HTML completo a partir de bloques declarativos."""

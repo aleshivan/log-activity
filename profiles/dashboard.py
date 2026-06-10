@@ -13,6 +13,7 @@ from logreport.render import render_page
 from profiles import common
 
 NAME = 'dashboard'
+TITLE = 'Scarab Dashboard'
 
 _PREPARING = re.compile(r'Preparing:')
 

@@ -9,6 +9,7 @@ import activity
 import logreport
 
 NAME = 'precision'
+TITLE = 'Scarab Precision'
 
 PROFILE = logreport.Profile(
     accumulate=activity._accumulate_activity,
