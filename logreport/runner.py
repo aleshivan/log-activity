@@ -50,9 +50,9 @@ def run_plugin(plugin, cfg_path):
     log(f'  {data["total_events"]:,} log entries loaded')
 
     out = os.path.join(cfg.output_dir, cfg.output_name)
-    write_report(out, plugin.render_activity(data, cfg))
+    write_report(out, plugin.render_activity(data, perf_data, cfg))
     log(f'Report written to : {out} (+ .gz)')
 
     pout = os.path.join(cfg.output_dir, cfg.perf_name)
-    write_report(pout, plugin.render_perf(perf_data, cfg))
+    write_report(pout, plugin.render_perf(data, perf_data, cfg))
     log(f'Perf report   to : {pout} (+ .gz)')

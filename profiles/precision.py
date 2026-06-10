@@ -20,12 +20,12 @@ PROFILE = logreport.Profile(
 )
 
 
-def render_activity(data, cfg):
+def render_activity(data, perf_data, cfg):
     daily = activity.extract_daily(data)
     return activity.html_report(data, daily, max_reports=cfg.max_reports,
                                 top_farms_n=cfg.top_farms, refresh_seconds=cfg.refresh)
 
 
-def render_perf(perf_data, cfg):
+def render_perf(data, perf_data, cfg):
     daily_perf = activity.extract_daily_perf(perf_data)
     return activity.perf_report(perf_data, daily_perf, refresh_seconds=cfg.refresh)

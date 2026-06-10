@@ -17,7 +17,7 @@ from .parsing import parse_sorted
 from .stats import merge_counts
 
 # Bump when parsing/aggregation logic changes, to invalidate cached .gz aggregates.
-CACHE_VERSION = 1
+CACHE_VERSION = 2
 
 
 @dataclass

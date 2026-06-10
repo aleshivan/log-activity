@@ -239,6 +239,24 @@ JS = '''
     });
   })();
 
+  // ── gráficas declaradas (bar/line) ──
+  var CHARTS = STORE('chartsData', []);
+  CHARTS.forEach(function (c) {
+    var el = document.getElementById(c.id); if (!el) return;
+    new Chart(el, {
+      type: c.type || 'bar',
+      data: { labels: c.labels, datasets: c.datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        indexAxis: c.horizontal ? 'y' : 'x',
+        plugins: { legend: { display: (c.datasets || []).length > 1 },
+                   title: { display: !!c.title, text: c.title || '' } },
+        scales: { x: { title: { display: !!c.xlabel, text: c.xlabel || '' } },
+                  y: { beginAtZero: true, title: { display: !!c.ylabel, text: c.ylabel || '' } } }
+      }
+    });
+  });
+
   // ── init ──
   var tz0 = localStorage.getItem(TZ_KEY) || 'UTC';
   var tzSel = document.getElementById('tzSelect');
@@ -390,11 +408,22 @@ def render_index(systems, *, title='Reportes', subtitle='', refresh_seconds=1200
     )
 
 
+def _charts_sections(charts):
+    if not charts:
+        return ''
+    out = ''
+    for c in charts:
+        out += (f'<div class="section"><h2>{esc(c.get("section", c.get("title", "")))}</h2>'
+                f'<div class="day-chart-wrap"><canvas id="{esc(c["id"])}"></canvas></div></div>')
+    return out
+
+
 def render_page(*, title, subtitle='', refresh_seconds=1200, lang='es',
-                cards=None, daily=None, tables=None, errors=None):
+                cards=None, daily=None, charts=None, tables=None, errors=None):
     """Arma el reporte HTML completo a partir de bloques declarativos."""
     err_html, stacks = _errors(errors)
-    sections = _daily(daily) + ''.join(_table(t) for t in (tables or [])) + err_html
+    sections = (_daily(daily) + _charts_sections(charts)
+                + ''.join(_table(t) for t in (tables or [])) + err_html)
 
     islands = ''
     if daily:
@@ -402,6 +431,9 @@ def render_page(*, title, subtitle='', refresh_seconds=1200, lang='es',
                     + json.dumps(daily['series']) + '</script>')
         islands += ('<script type="application/json" id="dailyMetrics">'
                     + json.dumps(daily['metrics']) + '</script>')
+    if charts:
+        islands += ('<script type="application/json" id="chartsData">'
+                    + json.dumps(charts) + '</script>')
     islands += '<script type="application/json" id="stackData">' + json.dumps(stacks) + '</script>'
 
     return (
