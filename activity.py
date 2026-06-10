@@ -17,6 +17,50 @@ from datetime import datetime
 # cached aggregates of the immutable .gz logs.
 CACHE_VERSION = 1
 
+# ── Tema visual "Verde Scarab" (handoff de diseño) ──────────────────────────────
+FONT_LINK = ('<link href="https://fonts.googleapis.com/css2?family=Archivo:'
+             'wght@400;500;600;700;800&display=swap" rel="stylesheet">')
+
+THEME_CSS = '''
+  /* ===== Tema Verde Scarab (override) ===== */
+  :root{
+    --green:#12613f;--green-hover:#0b4e31;--green-data:#117c52;--lime:#8ac465;
+    --yellow:#f2b705;--teal:#04a6b7;--navy:#003153;--alert:#b54334;
+    --bg:#f9f9f9;--ink:#1d2b24;--ink2:#5d6f66;--cb:#dde7e1;
+  }
+  body{font-family:'Archivo',system-ui,-apple-system,BlinkMacSystemFont,sans-serif;background:var(--bg);color:var(--ink)}
+  header{background:var(--green);border-bottom:3px solid var(--yellow)}
+  header h1{color:#fff;font-weight:700;letter-spacing:-.01em}
+  header small,header .sub{color:#bcd8c9}
+  header a{color:#bcd8c9} header a:hover{color:#fff}
+  .tz-select{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);color:#fff}
+  .cards .card{border:1px solid var(--cb);box-shadow:0 1px 3px rgba(6,67,42,.05)}
+  .cards .card .num{color:var(--navy);font-variant-numeric:tabular-nums}
+  .cards .card .lbl{color:var(--ink2);text-transform:uppercase;letter-spacing:.08em;font-weight:600}
+  .cards .card:has(.num.amber){background:#fdf8ea;border-color:#ecc94b}
+  .cards .card:has(.num.amber) .num{color:#d69a07}
+  .cards .card:has(.num.red){background:#fdf2f0;border-color:#e6988f}
+  .cards .card:has(.num.red) .num{color:var(--alert)}
+  .cards .card:has(.num.green){background:#eef8f2;border-color:#93c7ab}
+  .cards .card:has(.num.green) .num{color:var(--green-data)}
+  .cards .card:has(.num:not(.amber):not(.red):not(.green)){background:#eef4fa;border-color:#b6cfe2}
+  .day-card{background:#fbfbfb;border:1px solid #e9e9e9;box-shadow:none}
+  .day-card .num{color:var(--navy)} .day-card .num.amber{color:#d69a07}
+  .day-card .num.red{color:var(--alert)} .day-card .num.green{color:var(--green-data)}
+  .section,.chart-card{border:1px solid var(--cb);box-shadow:0 1px 3px rgba(6,67,42,.05)}
+  .section h2,.chart-card h2{color:#111;border-bottom:2px solid #e3ebe6}
+  th{background:#f0f2f1;color:#80878d;letter-spacing:.06em}
+  tbody tr:nth-child(odd){background:#f6f7f7}
+  tbody tr:hover{background:#e7f0eb}
+  .ms-slow,.ms-med{color:var(--alert)}
+  .day-nav,.pg-btn{background:var(--green);color:#fff;border:none}
+  .day-nav:hover,.pg-btn:hover:not(:disabled){background:var(--green-hover)}
+  .day-nav:disabled,.pg-btn:disabled{background:#c5d2cb}
+  .bar{background:var(--lime)} .bar-farm{background:var(--green-data)}
+  .err-filter:focus{border-color:var(--lime)}
+  a{color:var(--green-data)}
+'''
+
 LOG_PATTERN = re.compile(
     r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}[.]\d+)'  # timestamp
     r'\s+(\w+)\s+\d+\s+---'                            # level + pid
@@ -699,6 +743,7 @@ def perf_report(perf_data, daily_perf, refresh_seconds=1200):
 <html lang="es">
 <head>
 <meta charset="UTF-8">
+{FONT_LINK}
 <meta http-equiv="refresh" content="{refresh_seconds}">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
@@ -756,6 +801,7 @@ def perf_report(perf_data, daily_perf, refresh_seconds=1200):
   .day-charts{{display:grid;grid-template-columns:2fr 1fr;gap:20px}}
   @media(max-width:900px){{.day-charts{{grid-template-columns:1fr}}}}
   .day-chart-wrap{{position:relative;height:300px}}
+{THEME_CSS}
 </style>
 </head>
 <body>
@@ -946,10 +992,10 @@ const rtChart = new Chart(document.getElementById('rtChart'), {{
   data: {{
     labels: H_ISO.map(i => fmtHour(i, currentTz)),
     datasets: [
-      {{ label: 'Promedio', data: H_AVG, borderColor: '#3b82f6', backgroundColor: 'transparent', tension: 0.3, pointRadius: 3 }},
-      {{ label: 'P90',      data: H_P90, borderColor: '#f59e0b', backgroundColor: 'transparent', tension: 0.3, pointRadius: 3 }},
-      {{ label: 'P95',      data: H_P95, borderColor: '#ef4444', backgroundColor: 'transparent', tension: 0.3, pointRadius: 3 }},
-      {{ label: 'Máximo',   data: H_MAX, borderColor: '#94a3b8', backgroundColor: 'transparent', tension: 0.3, pointRadius: 2, borderDash: [4,3] }},
+      {{ label: 'Promedio', data: H_AVG, borderColor: '#117c52', backgroundColor: 'transparent', tension: 0.3, pointRadius: 3 }},
+      {{ label: 'P90',      data: H_P90, borderColor: '#f2b705', backgroundColor: 'transparent', tension: 0.3, pointRadius: 3 }},
+      {{ label: 'P95',      data: H_P95, borderColor: '#cc5650', backgroundColor: 'transparent', tension: 0.3, pointRadius: 3 }},
+      {{ label: 'Máximo',   data: H_MAX, borderColor: '#8a9a91', backgroundColor: 'transparent', tension: 0.3, pointRadius: 2, borderDash: [4,3] }},
     ]
   }},
   options: {{ responsive: true, plugins: {{ legend: {{ position: 'top' }} }},
@@ -960,7 +1006,7 @@ const volChart = new Chart(document.getElementById('volChart'), {{
   type: 'bar',
   data: {{
     labels: H_ISO.map(i => fmtHour(i, currentTz)),
-    datasets: [{{ label: 'Operaciones', data: H_CNT, backgroundColor: '#93c5fd' }}]
+    datasets: [{{ label: 'Operaciones', data: H_CNT, backgroundColor: '#8ac465' }}]
   }},
   options: {{ responsive: true, plugins: {{ legend: {{ display: false }} }},
     scales: {{ y: {{ title: {{ display: true, text: 'Operaciones' }} }} }} }}
@@ -970,7 +1016,7 @@ const netChart = new Chart(document.getElementById('netChart'), {{
   type: 'bar',
   data: {{
     labels: NET_ISO.map(i => fmtHour(i, currentTz)),
-    datasets: [{{ label: 'Llamadas HTTP', data: NET_CNT, backgroundColor: '#c4b5fd' }}]
+    datasets: [{{ label: 'Llamadas HTTP', data: NET_CNT, backgroundColor: '#04a6b7' }}]
   }},
   options: {{ responsive: true, plugins: {{ legend: {{ display: false }} }},
     scales: {{ y: {{ title: {{ display: true, text: 'Llamadas' }} }} }} }}
@@ -981,8 +1027,8 @@ const typeChart = new Chart(document.getElementById('typeChart'), {{
   data: {{
     labels: T_NAMES,
     datasets: [
-      {{ label: 'Promedio (ms)', data: T_AVG, backgroundColor: '#3b82f6' }},
-      {{ label: 'P95 (ms)',      data: T_P95, backgroundColor: '#fca5a5' }},
+      {{ label: 'Promedio (ms)', data: T_AVG, backgroundColor: '#146b46' }},
+      {{ label: 'P95 (ms)',      data: T_P95, backgroundColor: '#e8a09b' }},
     ]
   }},
   options: {{ responsive: true, indexAxis: 'y',
@@ -994,7 +1040,7 @@ const effChart = new Chart(document.getElementById('effChart'), {{
   type: 'bar',
   data: {{
     labels: F_NAMES,
-    datasets: [{{ label: 'ms / etiqueta', data: F_VALS, backgroundColor: '#fcd34d' }}]
+    datasets: [{{ label: 'ms / etiqueta', data: F_VALS, backgroundColor: '#f2b705' }}]
   }},
   options: {{ responsive: true, indexAxis: 'y',
     plugins: {{ legend: {{ display: false }} }},
@@ -1005,7 +1051,7 @@ const loginChart = new Chart(document.getElementById('loginChart'), {{
   type: 'bar',
   data: {{
     labels: LH_ISO.map(i => fmtHour(i, currentTz)),
-    datasets: [{{ label: 'Logins', data: LH_CNT, backgroundColor: '#6ee7b7' }}]
+    datasets: [{{ label: 'Logins', data: LH_CNT, backgroundColor: '#117c52' }}]
   }},
   options: {{ responsive: true, plugins: {{ legend: {{ display: false }} }},
     scales: {{ y: {{ title: {{ display: true, text: 'Logins' }} }} }} }}
@@ -1162,10 +1208,10 @@ sel.addEventListener('change', () => applyTz(sel.value));
     const latSeries = rec => labels.map((_, h) => stats(rec.lat[h])[metric]);
     const volSeries = rec => rec.lat.map(a => a.length);
 
-    const latDs = [{{ label: `${{day}} · ${{metric}}`, data: latSeries(D), borderColor: '#3b82f6', backgroundColor: 'transparent', tension: .3, pointRadius: 2 }}];
+    const latDs = [{{ label: `${{day}} · ${{metric}}`, data: latSeries(D), borderColor: '#117c52', backgroundColor: 'transparent', tension: .3, pointRadius: 2 }}];
     const volDs = [{{ label: day, data: volSeries(D), backgroundColor: 'rgba(147,197,253,.8)' }}];
     if (C) {{
-      latDs.push({{ label: `${{cmp}} · ${{metric}}`, data: latSeries(C), borderColor: '#e65100', backgroundColor: 'transparent', borderDash: [5,3], tension: .3, pointRadius: 2 }});
+      latDs.push({{ label: `${{cmp}} · ${{metric}}`, data: latSeries(C), borderColor: '#f2b705', backgroundColor: 'transparent', borderDash: [5,3], tension: .3, pointRadius: 2 }});
       volDs.push({{ label: cmp, data: volSeries(C), backgroundColor: 'rgba(230,81,0,.45)' }});
     }}
 
@@ -1511,6 +1557,7 @@ def html_report(data, daily, max_reports=60, top_farms_n=60, refresh_seconds=120
 <html lang="es">
 <head>
 <meta charset="UTF-8">
+{FONT_LINK}
 <meta http-equiv="refresh" content="{refresh_seconds}">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
@@ -1620,6 +1667,7 @@ def html_report(data, daily, max_reports=60, top_farms_n=60, refresh_seconds=120
   .day-card .delta{{font-size:.78rem;margin-top:5px;font-weight:600;min-height:1em}}
   .delta.up{{color:#dc2626}} .delta.down{{color:#16a34a}} .delta.flat{{color:#9ca3af}}
   .day-chart-wrap{{position:relative;height:300px}}
+{THEME_CSS}
 </style>
 </head>
 <body>
@@ -1901,11 +1949,11 @@ def html_report(data, daily, max_reports=60, top_farms_n=60, refresh_seconds=120
   function drawChart(day, D, cmp, C) {{
     const ds = [{{
       label: day, data: D.vol,
-      backgroundColor: 'rgba(74,127,203,.65)', borderColor: '#4a7fcb', borderWidth: 1,
+      backgroundColor: 'rgba(138,196,101,.7)', borderColor: '#8ac465', borderWidth: 1,
     }}];
     if (C) ds.push({{
       label: cmp, data: C.vol, type: 'line',
-      borderColor: '#e65100', backgroundColor: 'rgba(230,81,0,.1)',
+      borderColor: '#f2b705', backgroundColor: 'rgba(242,183,5,.14)',
       borderWidth: 2, pointRadius: 2, tension: .3, fill: false,
     }});
     if (chart) {{ chart.data.datasets = ds; chart.update(); return; }}
@@ -1976,6 +2024,7 @@ def index_html(reports, refresh_seconds=1200):
     )
     return f'''<!DOCTYPE html>
 <html lang="es"><head><meta charset="UTF-8">
+{FONT_LINK}
 <meta http-equiv="refresh" content="{refresh_seconds}">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache"><meta http-equiv="Expires" content="0">
@@ -1991,6 +2040,7 @@ def index_html(reports, refresh_seconds=1200):
   .idx-links{{display:flex;flex-direction:column;gap:8px}}
   .idx-links a{{display:flex;justify-content:space-between;text-decoration:none;background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe;border-radius:8px;padding:10px 14px;font-weight:600}}
   .idx-links a:hover{{background:#c7d2fe}}
+{THEME_CSS}
 </style></head><body>
 <header><h1>Scarab Precision — Reportes</h1></header>
 <div class="container"><div class="idx-card"><h2>Precision</h2>
