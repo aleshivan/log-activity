@@ -11,7 +11,7 @@ import os
 import pickle
 import re
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Bump when parsing/categorization/aggregation logic changes, to invalidate the
 # cached aggregates of the immutable .gz logs.
@@ -59,7 +59,24 @@ THEME_CSS = '''
   .bar{background:var(--lime)} .bar-farm{background:var(--green-data)}
   .err-filter:focus{border-color:var(--lime)}
   a{color:var(--green-data)}
+  .genstamp{text-align:center;color:#9aa6a0;font-size:.74rem;padding:8px 0 28px}
 '''
+
+_GENERATED_AT = None
+
+
+def generated_at_iso():
+    """Marca de generación del run en ISO 8601 UTC (p.ej. 2026-06-10T16:02:33Z).
+
+    Se calcula una sola vez por proceso, así todos los reportes y el índice de un
+    mismo run comparten exactamente el mismo instante (sirve también de logstamp).
+    """
+    global _GENERATED_AT
+    if _GENERATED_AT is None:
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        _GENERATED_AT = now.strftime('%Y-%m-%dT%H:%M:%SZ')
+    return _GENERATED_AT
+
 
 LOG_PATTERN = re.compile(
     r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}[.]\d+)'  # timestamp
@@ -1265,6 +1282,7 @@ function _scarabSetTz(tz){{var s=document.getElementById('tzSelect');if(s&&tz&&s
 window.addEventListener('storage',function(e){{if(e.key==='scarab_tz')_scarabSetTz(e.newValue);}});
 window.addEventListener('message',function(e){{if(e.data&&e.data.scarabTz)_scarabSetTz(e.data.scarabTz);}});
 </script>
+<footer class="genstamp">Generado: {generated_at_iso()}</footer>
 </body>
 </html>'''
 
@@ -2005,6 +2023,7 @@ function _scarabSetTz(tz){{var s=document.getElementById('tzSelect');if(s&&tz&&s
 window.addEventListener('storage',function(e){{if(e.key==='scarab_tz')_scarabSetTz(e.newValue);}});
 window.addEventListener('message',function(e){{if(e.data&&e.data.scarabTz)_scarabSetTz(e.data.scarabTz);}});
 </script>
+<footer class="genstamp">Generado: {generated_at_iso()}</footer>
 </body>
 </html>'''
 
@@ -2063,7 +2082,10 @@ def index_html(reports, refresh_seconds=1200):
   .frame{{position:absolute;inset:0;width:100%;height:100%;border:none;background:#f9f9f9}}
 </style></head><body>
 <header style="display:flex;justify-content:space-between;align-items:center;gap:16px">
-  <h1>Scarab Precision — Reportes</h1>
+  <div>
+    <h1>Scarab Precision — Reportes</h1>
+    <small style="display:block;color:#bcd8c9;font-size:.78rem;font-weight:400;margin-top:2px">Generado: {generated_at_iso()}</small>
+  </div>
   <select id="tzShell" class="tzsh">
     <option value="UTC">UTC</option>
     <option value="America/Bogota">GMT-5 — Colombia</option>
@@ -2141,6 +2163,9 @@ if __name__ == '__main__':
         if not quiet:
             print(msg)
 
+    # Logstamp del run en ISO 8601 UTC (mismo instante que el sello de los
+    # reportes; siempre se imprime para servir de marca al redirigir a un log).
+    print(f'━━━ run @ {generated_at_iso()} ━━━')
     log(f'Log dir : {log_dir}')
     log(f'Pattern : {pattern}')
 
@@ -2178,3 +2203,4 @@ if __name__ == '__main__':
     _write_report(idx, index_html([('Actividad', output_name), ('Rendimiento', perf_name)],
                                    refresh_seconds=refresh_s))
     log(f'Índice escrito   : {idx} (+ .gz)')
+    print(f'━━━ fin @ {generated_at_iso()} ━━━')
